@@ -23,8 +23,6 @@ def get_app_css() -> str:
         --ink-primary: #0F172A;
         --ink-secondary: #334155;
         --ink-muted: #64748B;
-        --accent-ink: #0F172A;
-        --accent-indigo: #4F46E5;
         --emerald-bg: #ECFDF5;
         --emerald-text: #047857;
         --emerald-border: #A7F3D0;
@@ -35,11 +33,10 @@ def get_app_css() -> str:
         --rose-text: #B91C1C;
         --rose-border: #FECACA;
         --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
-        --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.03);
     }
 
-    html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    html, body, .stApp, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
         color: var(--ink-primary);
         -webkit-font-smoothing: antialiased;
     }
@@ -49,25 +46,31 @@ def get_app_css() -> str:
         font-variant-numeric: tabular-nums;
     }
 
-    /* Hide Default Streamlit Chrome */
-    header[data-testid="stHeader"],
+    /* Keep header transparent so top content never clips & sidebar arrow stays clickable */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+    }
+    header[data-testid="stHeader"] button,
+    header[data-testid="stHeader"] svg {
+        color: #334155 !important;
+        fill: #334155 !important;
+    }
     #MainMenu,
     footer,
-    div[data-testid="stToolbar"],
+    div[data-testid="stAppDeployButton"],
     div[data-testid="stDecoration"],
     div[data-testid="stStatusWidget"] {
         display: none !important;
         visibility: hidden !important;
-        height: 0 !important;
     }
 
     .stApp {
-        background-color: var(--bg-canvas);
+        background-color: var(--bg-canvas) !important;
     }
 
     .block-container {
-        padding-top: 1.25rem !important;
-        padding-bottom: 2.5rem !important;
+        padding-top: 2.75rem !important;
+        padding-bottom: 3.5rem !important;
         padding-left: 2rem !important;
         padding-right: 2rem !important;
         max-width: 1440px;
@@ -75,8 +78,11 @@ def get_app_css() -> str:
 
     /* Clean White Sidebar */
     section[data-testid="stSidebar"] {
-        background-color: var(--bg-card);
-        border-right: 1px solid var(--border-hairline);
+        background-color: var(--bg-card) !important;
+        border-right: 1px solid var(--border-hairline) !important;
+    }
+    section[data-testid="stSidebar"] * {
+        color: var(--ink-primary);
     }
     section[data-testid="stSidebar"] .block-container {
         padding-top: 1.25rem !important;
@@ -84,7 +90,7 @@ def get_app_css() -> str:
         padding-right: 1.15rem !important;
     }
 
-    /* Clean Inputs, Selects & Expanders */
+    /* Force Light-Mode Inputs & Select Dropdowns (Fixes dark '1x' dropdown) */
     div[data-baseweb="input"] > div,
     div[data-baseweb="select"] > div,
     textarea,
@@ -94,18 +100,20 @@ def get_app_css() -> str:
         border: 1px solid var(--border-hairline) !important;
         border-radius: 8px !important;
         color: var(--ink-primary) !important;
-        box-shadow: var(--shadow-xs);
-        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        box-shadow: var(--shadow-xs) !important;
     }
-    div[data-baseweb="input"] > div:hover,
-    div[data-baseweb="select"] > div:hover,
-    textarea:hover {
-        border-color: var(--border-hover) !important;
+    div[data-baseweb="select"] > div * {
+        color: var(--ink-primary) !important;
     }
-    div[data-baseweb="input"] > div:focus-within,
-    div[data-baseweb="select"] > div:focus-within {
-        border-color: var(--ink-primary) !important;
-        box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.06) !important;
+    div[data-baseweb="select"] svg {
+        fill: #475569 !important;
+    }
+    ul[data-baseweb="menu"] {
+        background-color: var(--bg-card) !important;
+        border: 1px solid var(--border-hairline) !important;
+    }
+    ul[data-baseweb="menu"] li {
+        color: var(--ink-primary) !important;
     }
 
     /* Sidebar Demo Controls Drawer */
@@ -121,7 +129,7 @@ def get_app_css() -> str:
         color: var(--ink-primary) !important;
     }
 
-    /* Linear / Vercel Style Buttons */
+    /* Clean SaaS Buttons */
     .stButton > button,
     .stDownloadButton > button,
     .stFormSubmitButton > button {
@@ -138,14 +146,16 @@ def get_app_css() -> str:
         background-color: var(--bg-card) !important;
         border: 1px solid var(--border-hairline) !important;
         color: var(--ink-primary) !important;
-        box-shadow: var(--shadow-xs);
+        box-shadow: var(--shadow-xs) !important;
+    }
+    .stButton > button[kind="secondary"] *,
+    .stDownloadButton > button[kind="secondary"] * {
+        color: var(--ink-primary) !important;
     }
     .stButton > button[kind="secondary"]:hover,
-    .stDownloadButton > button[kind="secondary"]:hover,
-    .stFormSubmitButton > button[kind="secondary"]:hover {
+    .stDownloadButton > button[kind="secondary"]:hover {
         background-color: var(--bg-canvas) !important;
         border-color: var(--border-hover) !important;
-        color: var(--ink-primary) !important;
     }
     .stButton > button[kind="primary"],
     .stDownloadButton > button[kind="primary"],
@@ -153,54 +163,62 @@ def get_app_css() -> str:
         background-color: var(--ink-primary) !important;
         border: 1px solid var(--ink-primary) !important;
         color: #FFFFFF !important;
-        box-shadow: var(--shadow-xs);
+        box-shadow: var(--shadow-xs) !important;
     }
-    .stButton > button[kind="primary"]:hover,
-    .stDownloadButton > button[kind="primary"]:hover,
-    .stFormSubmitButton > button[kind="primary"]:hover {
+    .stButton > button[kind="primary"] *,
+    .stDownloadButton > button[kind="primary"] *,
+    .stFormSubmitButton > button[kind="primary"] * {
+        color: #FFFFFF !important;
+    }
+    .stButton > button[kind="primary"]:hover {
         background-color: #1E293B !important;
-        border-color: #1E293B !important;
     }
 
-    /* Pure White Bordered Cards */
+    /* Pure White Cards with Subtle Light-Gray Borders (Fixes harsh dark outlines) */
     [data-testid="stVerticalBlockBorderWrapper"] {
         background-color: var(--bg-card) !important;
         border: 1px solid var(--border-hairline) !important;
         border-radius: 12px !important;
         box-shadow: var(--shadow-xs) !important;
     }
-
-    [data-testid="stFileUploaderDropzone"] {
-        background-color: var(--bg-canvas) !important;
-        border: 1px dashed var(--border-hover) !important;
-        border-radius: 10px !important;
+    [data-testid="stVerticalBlockBorderWrapper"] > div {
+        border-color: var(--border-hairline) !important;
     }
 
-    /* Segmented SaaS Navigation Tabs */
+    /* Segmented Tabs (Fixes invisible tab text & kills red underline) */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 4px;
-        background-color: var(--bg-subtle);
-        padding: 4px;
-        border-radius: 10px;
-        border: 1px solid var(--border-hairline);
-        margin-bottom: 1.25rem;
+        gap: 4px !important;
+        background-color: var(--bg-subtle) !important;
+        padding: 4px !important;
+        border-radius: 10px !important;
+        border: 1px solid var(--border-hairline) !important;
+        margin-bottom: 1.2rem !important;
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 7px;
-        padding: 7px 14px;
-        color: var(--ink-muted);
-        font-weight: 500;
-        font-size: 0.85rem;
+        border-radius: 7px !important;
+        padding: 7px 14px !important;
+        background-color: transparent !important;
         border: none !important;
+    }
+    .stTabs [data-baseweb="tab"] p,
+    .stTabs [data-baseweb="tab"] span {
+        color: #475569 !important;
+        font-weight: 500 !important;
+        font-size: 0.85rem !important;
     }
     .stTabs [aria-selected="true"] {
         background-color: var(--bg-card) !important;
+        box-shadow: var(--shadow-xs) !important;
+    }
+    .stTabs [aria-selected="true"] p,
+    .stTabs [aria-selected="true"] span {
         color: var(--ink-primary) !important;
         font-weight: 600 !important;
-        box-shadow: var(--shadow-xs);
     }
-    .stTabs [data-baseweb="tab-highlight"] {
+    .stTabs [data-baseweb="tab-highlight"],
+    .stTabs [data-baseweb="tab-border"] {
         display: none !important;
+        background: transparent !important;
     }
 
     /* Top Workspace Header */
@@ -222,9 +240,9 @@ def get_app_css() -> str:
         gap: 12px;
     }
     .brand-mark {
-        width: 34px;
-        height: 34px;
-        border-radius: 8px;
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
         background-color: var(--ink-primary);
         display: flex;
         align-items: center;
@@ -232,17 +250,20 @@ def get_app_css() -> str:
         flex-shrink: 0;
     }
     .brand-name {
-        font-size: 1.12rem;
-        font-weight: 700;
-        letter-spacing: -0.025em;
-        color: var(--ink-primary);
-        margin: 0;
-        line-height: 1.2;
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.025em !important;
+        color: #0F172A !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1.2 !important;
     }
     .brand-desc {
-        font-size: 0.80rem;
-        color: var(--ink-muted);
-        margin: 2px 0 0 0;
+        font-size: 0.80rem !important;
+        color: #64748B !important;
+        margin: 2px 0 0 0 !important;
+        padding: 0 !important;
+        line-height: 1.3 !important;
     }
     .top-meta {
         display: flex;
@@ -289,10 +310,6 @@ def get_app_css() -> str:
         border-radius: 12px;
         padding: 16px 18px;
         box-shadow: var(--shadow-xs);
-        transition: border-color 0.15s ease;
-    }
-    .kpi-card:hover {
-        border-color: var(--border-hover);
     }
     .kpi-top {
         display: flex;
@@ -341,21 +358,20 @@ def get_app_css() -> str:
     .delta-neg { background: var(--amber-bg); color: var(--amber-text); }
     .delta-flat { background: var(--bg-subtle); color: var(--ink-muted); }
 
-    /* Typography Helpers */
+    /* Typography & Cards */
     .sec-title {
-        font-size: 0.94rem;
-        font-weight: 600;
-        letter-spacing: -0.015em;
-        color: var(--ink-primary);
-        margin: 0 0 2px 0;
+        font-size: 0.94rem !important;
+        font-weight: 600 !important;
+        letter-spacing: -0.015em !important;
+        color: #0F172A !important;
+        margin: 0 0 2px 0 !important;
     }
     .sec-sub {
-        font-size: 0.80rem;
-        color: var(--ink-muted);
-        margin: 0 0 12px 0;
+        font-size: 0.80rem !important;
+        color: #64748B !important;
+        margin: 0 0 12px 0 !important;
     }
 
-    /* Student Attention Seat Cards */
     .seat-card {
         background-color: var(--bg-canvas);
         border: 1px solid var(--border-hairline);
@@ -367,42 +383,13 @@ def get_app_css() -> str:
         background-color: var(--rose-bg);
         border-color: var(--rose-border);
     }
-    .seat-top {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 6px;
-    }
-    .seat-name {
-        font-size: 0.84rem;
-        font-weight: 600;
-        color: var(--ink-primary);
-    }
-    .seat-id {
-        font-size: 0.73rem;
-        color: var(--ink-muted);
-    }
-    .seat-bar-bg {
-        height: 5px;
-        width: 100%;
-        background-color: #E2E8F0;
-        border-radius: 99px;
-        overflow: hidden;
-        margin: 6px 0;
-    }
-    .seat-bar-fill {
-        height: 100%;
-        border-radius: 99px;
-    }
-    .seat-meta {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 0.73rem;
-        color: var(--ink-secondary);
-    }
+    .seat-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .seat-name { font-size: 0.84rem; font-weight: 600; color: var(--ink-primary); }
+    .seat-id { font-size: 0.73rem; color: var(--ink-muted); }
+    .seat-bar-bg { height: 5px; width: 100%; background-color: #E2E8F0; border-radius: 99px; overflow: hidden; margin: 6px 0; }
+    .seat-bar-fill { height: 100%; border-radius: 99px; }
+    .seat-meta { display: flex; justify-content: space-between; align-items: center; font-size: 0.73rem; color: var(--ink-secondary); }
 
-    /* Assistant & Notification Cards */
     .coach-card {
         background-color: var(--bg-canvas);
         border: 1px solid var(--border-hairline);
@@ -410,12 +397,7 @@ def get_app_css() -> str:
         padding: 12px 14px;
         margin-bottom: 8px;
     }
-    .coach-meta {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 6px;
-    }
+    .coach-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
     .coach-badge {
         font-size: 0.68rem;
         font-weight: 600;
@@ -425,11 +407,7 @@ def get_app_css() -> str:
         color: #4338CA;
         border: 1px solid #E0E7FF;
     }
-    .coach-body {
-        font-size: 0.83rem;
-        line-height: 1.55;
-        color: var(--ink-secondary);
-    }
+    .coach-body { font-size: 0.83rem; line-height: 1.55; color: var(--ink-secondary); }
 
     .alert-banner {
         display: flex;
@@ -474,7 +452,6 @@ def get_app_css() -> str:
         border-radius: 6px;
     }
 
-    /* Privacy Card */
     .privacy-box {
         background-color: var(--bg-canvas);
         border: 1px solid var(--border-hairline);
@@ -501,8 +478,8 @@ def render_top_nav_html(room_code: str, role: str, status_label: str, unread_ale
         <div class="brand-wrap">
             <div class="brand-mark">{SVG_ICONS["brand"]}</div>
             <div>
-                <h1 class="brand-name">AttendAI</h1>
-                <p class="brand-desc">Classroom Attendance, Engagement &amp; Student Safeguarding</p>
+                <div class="brand-name">AttendAI</div>
+                <div class="brand-desc">Classroom Attendance, Engagement &amp; Student Safeguarding</div>
             </div>
         </div>
         <div class="top-meta">
@@ -600,7 +577,6 @@ def render_coach_card_html(category: str, timestamp: str, body: str) -> str:
 
 
 def render_focus_guard_widget(max_strikes: int) -> str:
-    """Light-mode browser window-focus monitoring widget."""
     return f"""
     <div id="fg-box" style="font-family:Inter,system-ui,sans-serif;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 14px;color:#0F172A;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">

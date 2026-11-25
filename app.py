@@ -577,7 +577,7 @@ def _render_live_session_body():
                 '<p class="sec-sub">Real-time class attention across visual focus, posture, and discussion. Open <strong>Demo Controls</strong> in the sidebar to test scenarios.</p>',
                 unsafe_allow_html=True,
             )
-            st.plotly_chart(build_spline_fig(hist), width="stretch", config=PLOTLY_CFG, key=f"spline_{len(hist)}_{m['total_engagement']}")
+            st.plotly_chart(build_spline_fig(hist), width="stretch", config=PLOTLY_CFG, theme=None, key=f"spline_{len(hist)}_{m['total_engagement']}")
 
         with st.container(border=True):
             st.markdown('<p class="sec-title">Live Classroom Attendance</p>', unsafe_allow_html=True)
@@ -1159,7 +1159,7 @@ def render_roster_and_reports():
                         yaxis=dict(range=[0, 105], gridcolor="#F1F5F9"),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                     )
-                    st.plotly_chart(fig_b, width="stretch", config=PLOTLY_CFG)
+                    st.plotly_chart(fig_b, width="stretch", config=PLOTLY_CFG, theme=None)
 
             with c2:
                 with st.container(border=True):
@@ -1184,7 +1184,7 @@ def render_roster_and_reports():
                         legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08),
                         annotations=[dict(text=f"<b>{comp:.1f}%</b><br><span style='font-size:11px;color:#64748B;'>Overall</span>", x=0.5, y=0.5, font=dict(size=20, color="#0F172A"), showarrow=False)],
                     )
-                    st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CFG)
+                    st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CFG, theme=None)
 
 
 # --- Primary Navigation ---
