@@ -50,6 +50,7 @@ from modules.styles import (
     SVG_ICONS,
     get_app_css,
     render_top_nav_html,
+    render_faculty_card_html,
     render_kpi_html,
     render_seat_card_html,
     render_coach_card_html,
@@ -71,9 +72,9 @@ st.markdown(get_app_css(), unsafe_allow_html=True)
 
 PLOTLY_CFG = {"displayModeBar": False}
 PLOTLY_HOVER = dict(
-    bgcolor="#FFFFFF",
-    bordercolor="#E2E8F0",
-    font=dict(color="#0F172A", family="Inter", size=12),
+    bgcolor="#1E293B",
+    bordercolor="#334155",
+    font=dict(color="#F8FAFC", family="Inter", size=12),
 )
 
 
@@ -171,7 +172,7 @@ def get_active_lobby_obj() -> dict:
             return lb
     return lobbies[0] if lobbies else {
         "lobby_code": "LOBBY-ECE301",
-        "name": "ECE Semester V Cohort",
+        "name": "ECE Semester V Core Cohort",
         "cohort": "B.Tech ECE",
         "active_host": "Dr. Vikram Deshmukh",
         "active_subject": "Digital Signal Processing",
@@ -349,9 +350,9 @@ def build_spline_fig(history: list) -> go.Figure:
     df_h = pd.DataFrame(history)
     fig = go.Figure()
     series = [
-        ("Overall", "#0F172A", 2.8),
-        ("Visual Attention", "#4F46E5", 2.0),
-        ("Class Discussion", "#059669", 2.0),
+        ("Overall", "#818CF8", 2.8),
+        ("Visual Attention", "#38BDF8", 2.0),
+        ("Class Discussion", "#10B981", 2.0),
     ]
     for name, col, w in series:
         if name in df_h.columns:
@@ -362,29 +363,29 @@ def build_spline_fig(history: list) -> go.Figure:
                     mode="lines+markers",
                     name=name,
                     line=dict(color=col, width=w, shape="spline"),
-                    marker=dict(size=5, line=dict(width=1.5, color="#FFFFFF")),
+                    marker=dict(size=5, line=dict(width=1.5, color="#0F172A")),
                     hovertemplate=f"<b>{name}</b>: %{{y:.1f}}%<extra></extra>",
                 )
             )
     fig.add_hline(
         y=60,
         line_dash="dot",
-        line_color="#D97706",
+        line_color="#F59E0B",
         annotation_text="Target Minimum (60%)",
         annotation_position="bottom right",
-        annotation_font=dict(color="#B45309", size=11),
+        annotation_font=dict(color="#FCD34D", size=11),
     )
     fig.update_layout(
         height=270,
         margin=dict(l=8, r=8, t=12, b=8),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#64748B", family="Inter", size=11),
+        font=dict(color="#CBD5E1", family="Inter", size=11),
         hovermode="x unified",
         hoverlabel=PLOTLY_HOVER,
-        yaxis=dict(range=[0, 105], title="Score %", gridcolor="#F1F5F9", zeroline=False),
-        xaxis=dict(title="", gridcolor="#F8FAFC"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(range=[0, 105], title="Score %", gridcolor="rgba(148,163,184,0.12)", zeroline=False),
+        xaxis=dict(title="", gridcolor="rgba(148,163,184,0.06)"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#CBD5E1")),
     )
     return fig
 
@@ -400,7 +401,7 @@ with st.sidebar:
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">'
         f'<div class="brand-mark" style="width:28px;height:28px;">{SVG_ICONS["brand"]}</div>'
-        f'<span style="font-size:1.05rem;font-weight:700;letter-spacing:-0.02em;color:#0F172A;">AttendAI</span>'
+        f'<span style="font-size:1.05rem;font-weight:700;letter-spacing:-0.02em;color:#F8FAFC;">AttendAI</span>'
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -434,7 +435,6 @@ with st.sidebar:
 
     st.divider()
 
-    # Collapsible 'Demo Controls' Side Drawer (Keeps Main Screen Clean & Focused)
     with st.expander("Demo Controls", expanded=False):
         st.caption("Preview classroom scenarios without a live camera.")
 
@@ -484,7 +484,7 @@ with st.sidebar:
     st.markdown(
         f"""
         <div class="privacy-box">
-            <div style="display:flex;align-items:center;gap:6px;font-weight:600;color:#0F172A;margin-bottom:4px;">
+            <div style="display:flex;align-items:center;gap:6px;font-weight:600;color:#F8FAFC;margin-bottom:4px;">
                 {SVG_ICONS["lock"]}<span>Privacy &amp; Compliance</span>
             </div>
             <div><span class="dot-ok">&bull;</span>On-device processing active</div>
@@ -519,25 +519,24 @@ if st.session_state.last_generated_pdf:
 
 
 # ==============================================================================
-# TAB 1: LIVE SESSION (FOCUSED ON TIMER + 4 ENGAGEMENT METRICS)
+# TAB 1: LIVE SESSION
 # ==============================================================================
 def _render_live_session_body():
     lobby = get_active_lobby_obj()
     if st.session_state.drop_alert:
         st.markdown(f'<div class="alert-banner">{SVG_ICONS["alert"]}<span>{st.session_state.drop_alert}</span></div>', unsafe_allow_html=True)
 
-    # Focused Session Timer Bar
     with st.container(border=True):
         sc1, sc2, sc3, sc4, sc5 = st.columns([1.8, 0.9, 0.85, 0.7, 1.25], vertical_alignment="center")
         mins, secs = divmod(int(st.session_state.session_remaining_sec), 60)
         with sc1:
-            st.markdown(f'<div class="sec-title" style="font-size:1.02rem;">{lobby["active_subject"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="sec-title" style="font-size:1.05rem;">{lobby["active_subject"]}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="sec-sub" style="margin:0;">{lobby["active_host"]} &middot; {lobby["name"]}</div>', unsafe_allow_html=True)
         with sc2:
             st.markdown(
                 f'<div style="text-align:center;">'
-                f'<div style="font-size:0.70rem;font-weight:500;color:#64748B;">Time Remaining</div>'
-                f'<div class="timer-val" style="font-size:1.45rem;font-weight:700;letter-spacing:-0.02em;color:#0F172A;">{mins:02d}:{secs:02d}</div>'
+                f'<div style="font-size:0.70rem;font-weight:500;color:#94A3B8;">Time Remaining</div>'
+                f'<div class="timer-val" style="font-size:1.45rem;font-weight:700;letter-spacing:-0.02em;color:#F8FAFC;">{mins:02d}:{secs:02d}</div>'
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -557,7 +556,6 @@ def _render_live_session_body():
                 finalize_and_auto_generate_pdf()
                 st.rerun()
 
-    # Four Clean Engagement Metric Cards
     m = st.session_state.latest_metrics
     d = compute_deltas(m, st.session_state.prev_metrics)
     hist = st.session_state.engagement_history
@@ -671,13 +669,13 @@ def render_live_session_paused():
 
 
 # ==============================================================================
-# TAB 2: COURSE ROOMS (MULTI-TEACHER COLLABORATION)
+# TAB 2: COURSE ROOMS (UPGRADED FACULTY CARDS + FULL-WIDTH ASSIGNMENTS TABLE)
 # ==============================================================================
 @st.fragment
 def render_course_rooms():
-    l_top1, l_top2, l_top3 = st.columns([2.1, 1, 1], vertical_alignment="center")
+    l_top1, l_top2, l_top3 = st.columns([2.2, 0.9, 0.9], vertical_alignment="center")
     with l_top1:
-        st.markdown('<p class="sec-title" style="font-size:1.05rem;">Course Rooms</p>', unsafe_allow_html=True)
+        st.markdown('<p class="sec-title" style="font-size:1.08rem;">Course Rooms</p>', unsafe_allow_html=True)
         st.markdown('<p class="sec-sub">Shared cohort rooms where subject faculty co-host live attendance and post assignments together.</p>', unsafe_allow_html=True)
 
     with l_top2:
@@ -710,27 +708,31 @@ def render_course_rooms():
                         st.error("Room code not found.")
 
     active_lb = get_active_lobby_obj()
-    col_l, col_r = st.columns([1.05, 1.35], gap="medium")
+    col_l, col_r = st.columns([1.0, 1.45], gap="medium")
 
     with col_l:
         with st.container(border=True):
             st.markdown(
                 f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-                f'<span class="sec-title">{active_lb["name"]}</span><span class="room-code">{active_lb["lobby_code"]}</span>'
+                f'<span class="sec-title" style="font-size:1.0rem;">{active_lb["name"]}</span><span class="room-code">{active_lb["lobby_code"]}</span>'
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            st.markdown(f'<p class="sec-sub">{active_lb["cohort"]} &middot; Active Host: <strong>{active_lb["active_host"]}</strong></p>', unsafe_allow_html=True)
+            st.markdown(
+                f'<p class="sec-sub">{active_lb["cohort"]} &middot; Active Host: <strong style="color:#F8FAFC;">{active_lb["active_host"]}</strong></p>',
+                unsafe_allow_html=True,
+            )
 
+            st.markdown('<p style="font-size:0.80rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#94A3B8;margin:10px 0 8px 0;">Faculty in Room</p>', unsafe_allow_html=True)
             teachers = get_lobby_teachers(active_lb["lobby_code"])
-            st.markdown("**Faculty in Room**")
             for t in teachers:
-                tc1, tc2 = st.columns([2.2, 1], vertical_alignment="center")
-                badge = '<span style="color:#047857;font-weight:600;font-size:0.78rem;">● Hosting</span>' if t["is_live"] else '<span style="color:#64748B;font-size:0.78rem;">● Available</span>'
-                with tc1:
-                    st.markdown(f"**{t['teacher_name']}** — {t['subject']} &nbsp; {badge}", unsafe_allow_html=True)
-                with tc2:
-                    if not t["is_live"] and st.session_state.user_role == "Instructor / Mentor":
+                if t["is_live"] or st.session_state.user_role != "Instructor / Mentor":
+                    st.markdown(render_faculty_card_html(t["teacher_name"], t["subject"], bool(t["is_live"])), unsafe_allow_html=True)
+                else:
+                    fc1, fc2 = st.columns([2.6, 1.0], vertical_alignment="center")
+                    with fc1:
+                        st.markdown(render_faculty_card_html(t["teacher_name"], t["subject"], False), unsafe_allow_html=True)
+                    with fc2:
                         if st.button("Host Next", key=f"host_{t['id']}", width="stretch"):
                             set_lobby_active_host(active_lb["lobby_code"], t["teacher_name"], t["subject"])
                             st.toast(f"{t['teacher_name']} is now hosting {t['subject']}.")
@@ -738,9 +740,9 @@ def render_course_rooms():
 
     with col_r:
         with st.container(border=True):
-            ah1, ah2 = st.columns([1.8, 1], vertical_alignment="center")
+            ah1, ah2 = st.columns([1.9, 1.0], vertical_alignment="center")
             with ah1:
-                st.markdown('<p class="sec-title">Shared Assignments</p>', unsafe_allow_html=True)
+                st.markdown('<p class="sec-title" style="font-size:1.0rem;">Shared Assignments</p>', unsafe_allow_html=True)
                 st.markdown('<p class="sec-sub">Coursework and deadlines shared across all subjects in this cohort.</p>', unsafe_allow_html=True)
             with ah2:
                 if st.session_state.user_role == "Instructor / Mentor":
@@ -757,18 +759,29 @@ def render_course_rooms():
 
             df_asg = get_lobby_assignments(active_lb["lobby_code"])
             if not df_asg.empty:
-                df_asg["Submitted"] = df_asg.apply(lambda r: f"{r['submitted_count']}/{r['total_students']}", axis=1)
+                df_disp = pd.DataFrame({
+                    "Subject": df_asg["subject"],
+                    "Assignment": df_asg["title"],
+                    "Instructor": df_asg["teacher_name"],
+                    "Due": df_asg["due_date"].astype(str).str.slice(5),
+                    "Submitted": df_asg.apply(lambda r: f"{r['submitted_count']}/{r['total_students']}", axis=1),
+                })
                 st.dataframe(
-                    df_asg[["subject", "title", "teacher_name", "due_date", "Submitted", "status"]].rename(
-                        columns={"subject": "Subject", "title": "Assignment", "teacher_name": "Instructor", "due_date": "Due Date", "status": "Status"}
-                    ),
+                    df_disp,
                     width="stretch",
                     hide_index=True,
+                    column_config={
+                        "Subject": st.column_config.TextColumn("Subject", width="medium"),
+                        "Assignment": st.column_config.TextColumn("Assignment", width="medium"),
+                        "Instructor": st.column_config.TextColumn("Instructor", width="small"),
+                        "Due": st.column_config.TextColumn("Due", width="small"),
+                        "Submitted": st.column_config.TextColumn("Submitted", width="small"),
+                    },
                 )
 
 
 # ==============================================================================
-# TAB 3: ATTENDANCE & GRADES (THEORY vs PRACTICAL, <75% ALERTS & REVIEW DESK)
+# TAB 3: ATTENDANCE & GRADES
 # ==============================================================================
 @st.fragment
 def render_attendance_and_grades():
@@ -804,8 +817,8 @@ def render_attendance_and_grades():
         b_cls = "badge-optimal" if row_s["cumulative_pct"] >= 85 else ("badge-watch" if row_s["cumulative_pct"] >= 75 else "badge-risk")
         st.markdown(
             f'<div class="kpi-card"><div class="kpi-top"><span class="kpi-label">Attendance Grade</span><span class="kpi-badge {b_cls}">{row_s["risk_tier"]}</span></div>'
-            f'<div style="font-size:1.15rem;font-weight:700;color:#0F172A;margin-top:6px;">{row_s["internal_grade"]}</div>'
-            f'<div style="font-size:0.74rem;color:#64748B;margin-top:4px;">Recovery target: {row_s["recovery"]}</div></div>',
+            f'<div style="font-size:1.15rem;font-weight:700;color:#F8FAFC;margin-top:6px;">{row_s["internal_grade"]}</div>'
+            f'<div style="font-size:0.74rem;color:#94A3B8;margin-top:4px;">Recovery target: {row_s["recovery"]}</div></div>',
             unsafe_allow_html=True,
         )
     st.write("")
@@ -917,9 +930,9 @@ def render_attendance_and_grades():
                     st.markdown(
                         f'<div class="notif-card notif-{"warning" if tk["status"]=="Pending Review" else "info"}">'
                         f'<div style="display:flex;justify-content:space-between;font-size:0.80rem;margin-bottom:4px;">'
-                        f'<strong>{tk["student_name"]} &middot; {tk["subject_name"]} ({tk["session_type"]})</strong>'
-                        f'<span style="color:#4F46E5;font-weight:600;font-size:0.74rem;">{tk["status"]}</span></div>'
-                        f'<div style="font-size:0.80rem;color:#475569;">Sent to {tk["recipient_name"]} — {tk["reason"]}</div></div>',
+                        f'<strong style="color:#F8FAFC;">{tk["student_name"]} &middot; {tk["subject_name"]} ({tk["session_type"]})</strong>'
+                        f'<span style="color:#A5B4FC;font-weight:600;font-size:0.74rem;">{tk["status"]}</span></div>'
+                        f'<div style="font-size:0.80rem;color:#CBD5E1;">Sent to {tk["recipient_name"]} — {tk["reason"]}</div></div>',
                         unsafe_allow_html=True,
                     )
                     if tk["status"] == "Pending Review" and st.session_state.user_role == "Instructor / Mentor":
@@ -956,9 +969,9 @@ def render_guardian_and_safety():
                 st.markdown(
                     f'<div class="room-summary">'
                     f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                    f'<strong style="color:#0F172A;">{ward_row["student_name"]} ({ward_row["student_id"]})</strong>'
+                    f'<strong style="color:#F8FAFC;">{ward_row["student_name"]} ({ward_row["student_id"]})</strong>'
                     f'<span class="room-code">Overall: {ward_row["cumulative_pct"]}%</span></div>'
-                    f'<div style="font-size:0.81rem;color:#475569;margin-top:6px;">Theory: <strong>{ward_row["theory_pct"]}%</strong> &middot; Practical: <strong>{ward_row["practical_pct"]}%</strong> &middot; Grade: <strong>{ward_row["internal_grade"]}</strong></div>'
+                    f'<div style="font-size:0.81rem;color:#CBD5E1;margin-top:6px;">Theory: <strong>{ward_row["theory_pct"]}%</strong> &middot; Practical: <strong>{ward_row["practical_pct"]}%</strong> &middot; Grade: <strong>{ward_row["internal_grade"]}</strong></div>'
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -978,9 +991,9 @@ def render_guardian_and_safety():
                     st.markdown(
                         f'<div class="notif-card notif-{sev_cls}">'
                         f'<div style="display:flex;justify-content:space-between;font-size:0.80rem;margin-bottom:4px;">'
-                        f'<strong style="color:#0F172A;">{nf["title"]}</strong><span style="color:#64748B;font-size:0.73rem;">{nf["created_at"]}</span></div>'
-                        f'<div style="font-size:0.80rem;color:#475569;">{nf["message"]}</div>'
-                        f'<div style="font-size:0.72rem;color:#64748B;margin-top:5px;">Recipient: {nf["recipient_role"]} &middot; {nf["channels"]} &middot; <strong>{ack_txt}</strong></div>'
+                        f'<strong style="color:#F8FAFC;">{nf["title"]}</strong><span style="color:#94A3B8;font-size:0.73rem;">{nf["created_at"]}</span></div>'
+                        f'<div style="font-size:0.80rem;color:#CBD5E1;">{nf["message"]}</div>'
+                        f'<div style="font-size:0.72rem;color:#94A3B8;margin-top:5px;">Recipient: {nf["recipient_role"]} &middot; {nf["channels"]} &middot; <strong style="color:#E2E8F0;">{ack_txt}</strong></div>'
                         f"</div>",
                         unsafe_allow_html=True,
                     )
@@ -1146,7 +1159,7 @@ def render_roster_and_reports():
                     st.markdown('<p class="sec-title">Engagement Breakdown</p>', unsafe_allow_html=True)
                     df_p = df_eng.tail(18).rename(columns={"gaze_score": "Visual Attention", "movement_score": "Posture & Activity", "audio_score": "Class Discussion"})
                     fig_b = go.Figure()
-                    for nm, cl in [("Visual Attention", "#0F172A"), ("Posture & Activity", "#4F46E5"), ("Class Discussion", "#059669")]:
+                    for nm, cl in [("Visual Attention", "#818CF8"), ("Posture & Activity", "#38BDF8"), ("Class Discussion", "#10B981")]:
                         fig_b.add_trace(go.Bar(x=df_p["timestamp"], y=df_p[nm], name=nm, marker_color=cl))
                     fig_b.update_layout(
                         barmode="group",
@@ -1154,10 +1167,10 @@ def render_roster_and_reports():
                         margin=dict(l=8, r=8, t=10, b=8),
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="#64748B", family="Inter", size=11),
+                        font=dict(color="#CBD5E1", family="Inter", size=11),
                         hoverlabel=PLOTLY_HOVER,
-                        yaxis=dict(range=[0, 105], gridcolor="#F1F5F9"),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        yaxis=dict(range=[0, 105], gridcolor="rgba(148,163,184,0.12)"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#CBD5E1")),
                     )
                     st.plotly_chart(fig_b, width="stretch", config=PLOTLY_CFG, theme=None)
 
@@ -1171,7 +1184,7 @@ def render_roster_and_reports():
                                 labels=["Visual Attention", "Posture & Activity", "Class Discussion"],
                                 values=[round(float(df_eng["gaze_score"].mean()), 1), round(float(df_eng["movement_score"].mean()), 1), round(float(df_eng["audio_score"].mean()), 1)],
                                 hole=0.68,
-                                marker=dict(colors=["#0F172A", "#4F46E5", "#059669"], line=dict(color="#FFFFFF", width=2)),
+                                marker=dict(colors=["#818CF8", "#38BDF8", "#10B981"], line=dict(color="#0F172A", width=2)),
                             )
                         ]
                     )
@@ -1179,10 +1192,10 @@ def render_roster_and_reports():
                         height=280,
                         margin=dict(l=12, r=12, t=12, b=28),
                         paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="#64748B", family="Inter", size=11),
+                        font=dict(color="#CBD5E1", family="Inter", size=11),
                         hoverlabel=PLOTLY_HOVER,
-                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08),
-                        annotations=[dict(text=f"<b>{comp:.1f}%</b><br><span style='font-size:11px;color:#64748B;'>Overall</span>", x=0.5, y=0.5, font=dict(size=20, color="#0F172A"), showarrow=False)],
+                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08, font=dict(color="#CBD5E1")),
+                        annotations=[dict(text=f"<b>{comp:.1f}%</b><br><span style='font-size:11px;color:#94A3B8;'>Overall</span>", x=0.5, y=0.5, font=dict(size=20, color="#F8FAFC"), showarrow=False)],
                     )
                     st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CFG, theme=None)
 
