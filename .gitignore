@@ -1,4 +1,29 @@
+# Python virtual environments
 venv/
+.venv/
+env/
+
+# Bytecode and caches
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local SQLite database & biometric vector stores (Privacy Safeguard)
 data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Local InsightFace / ONNX model weights
 .insightface/
+models/
+
+# OS & IDE artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Environment variables & secrets
+.env
+.streamlit/secrets.toml
