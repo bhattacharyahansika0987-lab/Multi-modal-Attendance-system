@@ -1,8 +1,6 @@
 import base64
 import cv2
-import time
 import random
-import tempfile
 import importlib.util
 import numpy as np
 import pandas as pd
@@ -46,8 +44,7 @@ from modules.database import (
     get_notifications,
     acknowledge_notification,
 )
-from modules.attendance import SustainedAttendanceTracker
-from modules.engagement import MultimodalEngagementAnalyzer, AUDIO_AVAILABLE
+from modules.engagement import AUDIO_AVAILABLE
 from modules.agent import TeachingAdvisorAgent, check_ollama_status
 from modules.styles import (
     SVG_ICONS,
@@ -62,7 +59,7 @@ from modules.styles import (
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="AttendAI • Commercial Classroom Intelligence",
+    page_title="AttendAI — Classroom Intelligence",
     page_icon=":material/verified_user:",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -74,13 +71,13 @@ st.markdown(get_app_css(), unsafe_allow_html=True)
 
 PLOTLY_CFG = {"displayModeBar": False}
 PLOTLY_HOVER = dict(
-    bgcolor="#141D33",
-    bordercolor="rgba(148, 163, 184, 0.28)",
-    font=dict(color="#F8FAFC", family="Inter", size=12),
+    bgcolor="#FFFFFF",
+    bordercolor="#E2E8F0",
+    font=dict(color="#0F172A", family="Inter", size=12),
 )
 
 
-@st.cache_resource(show_spinner="Loading local InsightFace (buffalo_sc) model...")
+@st.cache_resource(show_spinner="Preparing identity verification engine...")
 def get_face_analyzer():
     from insightface.app import FaceAnalysis
 
@@ -91,11 +88,10 @@ def get_face_analyzer():
 
 @st.cache_data(ttl=30)
 def get_diagnostics():
-    ollama_ok, ollama_label = check_ollama_status()
+    ollama_ok, _ = check_ollama_status()
     return {
-        "ollama_ok": ollama_ok,
-        "ollama_label": ollama_label,
-        "insightface_ok": importlib.util.find_spec("insightface") is not None,
+        "ai_local": ollama_ok,
+        "vision_ok": importlib.util.find_spec("insightface") is not None,
         "audio_ok": AUDIO_AVAILABLE,
     }
 
@@ -109,25 +105,24 @@ def _init_live_seats() -> list[dict]:
             "student_id": s["student_id"],
             "name": s["name"],
             "presence": 62.0 if is_flagged else round(86.0 + (idx % 3) * 4.0, 1),
-            "focus_state": "Drifting" if is_flagged else "Focused",
+            "focus_state": "Distracted" if is_flagged else "Engaged",
             "strikes": 2 if is_flagged else 0,
-            "status": "Verifying" if is_flagged else "Verified Present",
+            "status": "Checking" if is_flagged else "Present",
         })
     return seats
 
 
-# --- Session State Initialization ---
+# --- Session State ---
 defaults = {
     "user_role": "Instructor / Mentor",
     "active_lobby": "LOBBY-ECE301",
-    "active_student_id": "S104",  # Pre-selected <75% student to highlight warnings, calculator & disputes
+    "active_student_id": "S104",
     "session_id": datetime.now().strftime("SESS_%Y%m%d_%H%M%S"),
     "stream_playing": False,
     "stream_speed": "1x",
     "max_strikes": 3,
     "scheduled_minutes": 15,
     "session_remaining_sec": 900,
-    "running_video": False,
     "sim_gaze": 86,
     "sim_move": 84,
     "sim_audio": 72,
@@ -146,15 +141,15 @@ defaults = {
         "inactivity_sec": 1.5,
     },
     "engagement_history": [
-        {"Time": "09:30", "Overall": 81.2, "Visual Gaze": 84.0, "Posture & Motion": 82.0, "Vocal Audio": 75.0},
-        {"Time": "09:33", "Overall": 79.5, "Visual Gaze": 83.0, "Posture & Motion": 82.0, "Vocal Audio": 70.0},
-        {"Time": "09:36", "Overall": 82.0, "Visual Gaze": 86.0, "Posture & Motion": 84.0, "Vocal Audio": 72.0},
+        {"Time": "09:30", "Overall": 81.2, "Visual Attention": 84.0, "Posture & Activity": 82.0, "Class Discussion": 75.0},
+        {"Time": "09:33", "Overall": 79.5, "Visual Attention": 83.0, "Posture & Activity": 82.0, "Class Discussion": 70.0},
+        {"Time": "09:36", "Overall": 82.0, "Visual Attention": 86.0, "Posture & Activity": 84.0, "Class Discussion": 72.0},
     ],
     "suggestion_feed": [
         {
             "category": "Participation",
-            "time": "09:36:10",
-            "text": "Strong visual focus and Q&A participation across ECE501. Keep Rohan Verma (2/3 Focus Strikes) engaged with a direct concept check.",
+            "time": "09:36",
+            "text": "Class attention is strong across the room. Consider checking in with Rohan Verma (2/3 focus alerts) using a quick concept question.",
             "applied": False,
         }
     ],
@@ -168,7 +163,7 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 
-# --- Core Engine Helpers ---
+# --- Core Helpers ---
 def get_active_lobby_obj() -> dict:
     lobbies = get_lobbies()
     for lb in lobbies:
@@ -176,7 +171,7 @@ def get_active_lobby_obj() -> dict:
             return lb
     return lobbies[0] if lobbies else {
         "lobby_code": "LOBBY-ECE301",
-        "name": "ECE Semester V Core Cohort",
+        "name": "ECE Semester V Cohort",
         "cohort": "B.Tech ECE",
         "active_host": "Dr. Vikram Deshmukh",
         "active_subject": "Digital Signal Processing",
@@ -189,35 +184,34 @@ def compute_deltas(cur: dict, prev: dict | None) -> dict:
     return {k: round(cur[k] - prev[k], 1) for k in ["total_engagement", "gaze_score", "movement_score", "audio_score"]}
 
 
-def record_focus_violation(student_id: str, event_type: str = "Tab Switch / Window Exit", duration_sec: float = 14.2):
-    """Applies a proctoring strike; auto-marks ABSENT and alerts Parent/Mentor when limit is reached."""
+def record_focus_violation(student_id: str, event_type: str = "Left Classroom Window", duration_sec: float = 14.2):
     max_s = int(st.session_state.max_strikes)
     for seat in st.session_state.live_seats:
         if seat["student_id"] == student_id:
             seat["strikes"] += 1
             if seat["strikes"] >= max_s:
-                seat["status"] = "Absent (Focus Violation)"
-                seat["focus_state"] = "Focus Breached"
+                seat["status"] = "Absent (Focus Limit)"
+                seat["focus_state"] = "Out of Window"
                 seat["presence"] = max(20.0, seat["presence"] - 25.0)
-                action = f"Marked ABSENT (Limit {max_s}/{max_s}) + Parent & Mentor Alerted"
+                action = f"Marked Absent ({max_s}/{max_s} alerts) · Guardian & Mentor Notified"
                 for role in ("Parent", "Student", "Instructor"):
                     dispatch_notification(
                         recipient_role=role,
                         student_id=seat["student_id"],
                         student_name=seat["name"],
-                        category="Focus Proctoring",
+                        category="Focus Alert",
                         severity="Critical",
-                        title=f"Absent Override (Tab-Switch Violation) — {seat['name']}",
+                        title=f"Attendance Updated to Absent — {seat['name']}",
                         message=(
-                            f"{seat['name']} ({seat['student_id']}) exceeded the window-focus limit "
-                            f"({seat['strikes']}/{max_s} strikes) in {get_active_lobby_obj()['active_subject']} "
-                            f"and was automatically marked ABSENT."
+                            f"{seat['name']} reached the window-focus limit "
+                            f"({seat['strikes']}/{max_s} alerts) during {get_active_lobby_obj()['active_subject']} "
+                            f"and was automatically marked Absent."
                         ),
-                        channels="Portal • SMS • Email",
+                        channels="Portal · SMS · Email",
                     )
             else:
-                seat["focus_state"] = "Tab-Switch Warning"
-                action = f"Strike Warning Issued ({seat['strikes']}/{max_s})"
+                seat["focus_state"] = "Focus Warning"
+                action = f"Focus Alert Recorded ({seat['strikes']}/{max_s})"
 
             log_proctor_incident(
                 session_id=st.session_state.session_id,
@@ -234,12 +228,10 @@ def record_focus_violation(student_id: str, event_type: str = "Tab Switch / Wind
 
 
 def finalize_and_auto_generate_pdf():
-    """Concludes scheduled session, persists attendance, compiles PDF, archives it, and triggers auto-download."""
     lobby = get_active_lobby_obj()
     sess_id = st.session_state.session_id
     now_t = datetime.now().strftime("%H:%M:%S")
 
-    # Persist live seat attendance snapshot
     for seat in st.session_state.live_seats:
         log_attendance(
             session_id=sess_id,
@@ -254,7 +246,7 @@ def finalize_and_auto_generate_pdf():
     df_att, df_eng, df_sug = get_session_data(sess_id)
     if df_eng.empty and st.session_state.engagement_history:
         for row in st.session_state.engagement_history[-6:]:
-            log_engagement(sess_id, row["Visual Gaze"], row["Posture & Motion"], row["Vocal Audio"], row["Overall"])
+            log_engagement(sess_id, row["Visual Attention"], row["Posture & Activity"], row["Class Discussion"], row["Overall"])
         df_att, df_eng, df_sug = get_session_data(sess_id)
 
     df_proctor = get_proctor_incidents(sess_id)
@@ -284,7 +276,7 @@ def finalize_and_auto_generate_pdf():
         pdf_b64=b64_pdf,
     )
 
-    filename = f"AttendAI_AutoReport_{sess_id}.pdf"
+    filename = f"AttendAI_Session_Report_{sess_id}.pdf"
     st.session_state.auto_pdf_payload = (filename, b64_pdf)
     st.session_state.last_generated_pdf = (filename, pdf_bytes, md_text)
     st.session_state.stream_playing = False
@@ -306,28 +298,26 @@ def push_telemetry_step(gaze: float, move: float, audio: float, trigger_ai: bool
     st.session_state.engagement_history.append({
         "Time": datetime.now().strftime("%H:%M:%S"),
         "Overall": total,
-        "Visual Gaze": metrics["gaze_score"],
-        "Posture & Motion": metrics["movement_score"],
-        "Vocal Audio": metrics["audio_score"],
+        "Visual Attention": metrics["gaze_score"],
+        "Posture & Activity": metrics["movement_score"],
+        "Class Discussion": metrics["audio_score"],
     })
     st.session_state.engagement_history = st.session_state.engagement_history[-24:]
     log_engagement(st.session_state.session_id, metrics["gaze_score"], metrics["movement_score"], metrics["audio_score"], total)
 
-    # Update seat attention dynamics smoothly
     for seat in st.session_state.live_seats:
         if seat["strikes"] < int(st.session_state.max_strikes):
             delta_p = 0.8 if total >= 65 else -1.4
             seat["presence"] = round(min(100.0, max(35.0, seat["presence"] + delta_p)), 1)
-            seat["focus_state"] = "Focused" if gaze >= 70 else ("Drifting" if gaze >= 50 else "Inactive")
-            seat["status"] = "Verified Present" if seat["presence"] >= 60 else "Verifying"
+            seat["focus_state"] = "Engaged" if gaze >= 70 else ("Distracted" if gaze >= 50 else "Inactive")
+            seat["status"] = "Present" if seat["presence"] >= 60 else "Checking"
 
-    # Check >15% drop or <55% threshold
     hist = st.session_state.engagement_history
     recent_peak = max(item["Overall"] for item in hist[-5:]) if len(hist) >= 2 else total
     if recent_peak - total >= 15.0:
-        st.session_state.drop_alert = f"Engagement dropped -{round(recent_peak - total, 1)}% ({recent_peak}% -> {total}%). Trigger AI Coach for intervention."
+        st.session_state.drop_alert = f"Class attention dipped by {round(recent_peak - total, 1)}% ({recent_peak}% to {total}%). Check the Teaching Assistant for a quick reset idea."
     elif total < 55.0:
-        st.session_state.drop_alert = f"At-Risk Attention Alert: Class engagement fell to {total}%. Consider a concept check poll."
+        st.session_state.drop_alert = f"Low class engagement detected ({total}%). Consider pausing for a brief concept check."
     else:
         st.session_state.drop_alert = None
 
@@ -337,18 +327,17 @@ def push_telemetry_step(gaze: float, move: float, audio: float, trigger_ai: bool
         adv = agent.generate_advice(st.session_state.session_id, metrics, present_cnt, max(1, len(st.session_state.live_seats)))
         st.session_state.suggestion_feed.insert(
             0,
-            {"category": adv["category"], "time": datetime.now().strftime("%H:%M:%S"), "text": adv["text"], "applied": False},
+            {"category": adv["category"], "time": datetime.now().strftime("%H:%M"), "text": adv["text"], "applied": False},
         )
 
 
 def auto_tick_simulation():
-    """Advances auto-streaming simulation and scheduled session timer every 2 seconds."""
     step_sec = 4 if st.session_state.stream_speed == "2x" else 2
     st.session_state.session_remaining_sec = max(0, st.session_state.session_remaining_sec - step_sec)
 
-    g = float(np.clip(st.session_state.sim_gaze + random.uniform(-3.5, 3.5), 25, 98))
-    m = float(np.clip(st.session_state.sim_move + random.uniform(-2.8, 2.8), 30, 96))
-    a = float(np.clip(st.session_state.sim_audio + random.uniform(-4.5, 4.5), 8, 95))
+    g = float(np.clip(st.session_state.sim_gaze + random.uniform(-3.0, 3.0), 25, 98))
+    m = float(np.clip(st.session_state.sim_move + random.uniform(-2.5, 2.5), 30, 96))
+    a = float(np.clip(st.session_state.sim_audio + random.uniform(-4.0, 4.0), 8, 95))
     st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = int(g), int(m), int(a)
     push_telemetry_step(g, m, a, trigger_ai=False)
 
@@ -359,7 +348,12 @@ def auto_tick_simulation():
 def build_spline_fig(history: list) -> go.Figure:
     df_h = pd.DataFrame(history)
     fig = go.Figure()
-    for name, col, w in [("Overall", "#3B82F6", 3), ("Visual Gaze", "#38BDF8", 2), ("Vocal Audio", "#10B981", 2)]:
+    series = [
+        ("Overall", "#0F172A", 2.8),
+        ("Visual Attention", "#4F46E5", 2.0),
+        ("Class Discussion", "#059669", 2.0),
+    ]
+    for name, col, w in series:
         if name in df_h.columns:
             fig.add_trace(
                 go.Scatter(
@@ -368,53 +362,61 @@ def build_spline_fig(history: list) -> go.Figure:
                     mode="lines+markers",
                     name=name,
                     line=dict(color=col, width=w, shape="spline"),
-                    marker=dict(size=5, line=dict(width=1, color="#060913")),
+                    marker=dict(size=5, line=dict(width=1.5, color="#FFFFFF")),
                     hovertemplate=f"<b>{name}</b>: %{{y:.1f}}%<extra></extra>",
                 )
             )
-    fig.add_hline(y=60, line_dash="dot", line_color="rgba(245,158,11,0.55)", annotation_text="60% Watch Line", annotation_font=dict(color="#FBBF24", size=11))
+    fig.add_hline(
+        y=60,
+        line_dash="dot",
+        line_color="#D97706",
+        annotation_text="Target Minimum (60%)",
+        annotation_position="bottom right",
+        annotation_font=dict(color="#B45309", size=11),
+    )
     fig.update_layout(
-        height=255,
+        height=270,
         margin=dict(l=8, r=8, t=12, b=8),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#94A3B8", family="Inter", size=11),
+        font=dict(color="#64748B", family="Inter", size=11),
         hovermode="x unified",
         hoverlabel=PLOTLY_HOVER,
-        yaxis=dict(range=[0, 105], title="Score %", gridcolor="rgba(148,163,184,0.1)", zeroline=False),
-        xaxis=dict(title="", gridcolor="rgba(148,163,184,0.05)"),
+        yaxis=dict(range=[0, 105], title="Score %", gridcolor="#F1F5F9", zeroline=False),
+        xaxis=dict(title="", gridcolor="#F8FAFC"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
 
 
-# --- Sidebar: Role Switcher, Lobby Selector, Proctoring Config & Privacy Diagnostics ---
+# --- Sidebar: Workspace Navigation, Collapsible Demo Controls & Privacy ---
 diag = get_diagnostics()
 lobbies = get_lobbies()
 lobby_codes = [lb["lobby_code"] for lb in lobbies]
 all_students = load_all_students()
-student_map = {f"{s['student_id']} — {s['name']}": s["student_id"] for s in all_students}
+student_map = {f"{s['name']} ({s['student_id']})": s["student_id"] for s in all_students}
 
 with st.sidebar:
     st.markdown(
-        f'<div style="display:flex;align-items:center;gap:9px;margin-bottom:4px;">'
-        f'{SVG_ICONS["shield"]}<span style="font-size:1.1rem;font-weight:800;">Attend<span style="color:#3B82F6;">AI</span></span>'
+        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">'
+        f'<div class="brand-mark" style="width:28px;height:28px;">{SVG_ICONS["brand"]}</div>'
+        f'<span style="font-size:1.05rem;font-weight:700;letter-spacing:-0.02em;color:#0F172A;">AttendAI</span>'
         f"</div>",
         unsafe_allow_html=True,
     )
-    st.caption("Commercial EdTech & Edge AI Platform")
+    st.caption("Classroom Intelligence Workspace")
     st.divider()
 
-    st.markdown("**Role Perspective Switcher**")
+    st.markdown("**View As**")
     st.session_state.user_role = st.selectbox(
-        "Workspace Role",
+        "View As",
         ["Instructor / Mentor", "Student", "Parent / Guardian"],
         index=["Instructor / Mentor", "Student", "Parent / Guardian"].index(st.session_state.user_role),
         label_visibility="collapsed",
     )
 
     if st.session_state.user_role in ("Student", "Parent / Guardian") and student_map:
-        st.markdown("**Active Student / Ward Profile**")
+        st.markdown("**Student Profile**")
         inv_map = {v: k for k, v in student_map.items()}
         default_lbl = inv_map.get(st.session_state.active_student_id, list(student_map.keys())[0])
         chosen_lbl = st.selectbox(
@@ -425,161 +427,161 @@ with st.sidebar:
         )
         st.session_state.active_student_id = student_map[chosen_lbl]
 
-    st.markdown("**Active Classroom Lobby**")
+    st.markdown("**Active Course Room**")
     if lobby_codes:
         idx_l = lobby_codes.index(st.session_state.active_lobby) if st.session_state.active_lobby in lobby_codes else 0
-        st.session_state.active_lobby = st.selectbox("Lobby Room", lobby_codes, index=idx_l, label_visibility="collapsed")
+        st.session_state.active_lobby = st.selectbox("Course Room", lobby_codes, index=idx_l, label_visibility="collapsed")
 
     st.divider()
-    st.markdown("**Session & Proctoring Policy**")
-    input_mode = st.radio(
-        "Live Input Engine",
-        ["Auto-Streaming Simulator", "Live Webcam", "Recorded Video (.mp4)"],
-        label_visibility="collapsed",
-    )
-    st.session_state.max_strikes = st.slider("Tab-Switch Absent Limit (Strikes)", 1, 5, int(st.session_state.max_strikes))
-    sched_min = st.slider("Scheduled Session Length (min)", 5, 60, int(st.session_state.scheduled_minutes), 5)
-    if sched_min != st.session_state.scheduled_minutes:
-        st.session_state.scheduled_minutes = sched_min
-        st.session_state.session_remaining_sec = sched_min * 60
 
-    st.divider()
-    ollama_cls = "dot-ok" if diag["ollama_ok"] else "dot-warn"
-    audio_cls = "dot-ok" if diag["audio_ok"] else "dot-warn"
+    # Collapsible 'Demo Controls' Side Drawer (Keeps Main Screen Clean & Focused)
+    with st.expander("Demo Controls", expanded=False):
+        st.caption("Preview classroom scenarios without a live camera.")
+
+        if st.button("Active Discussion", icon=":material/forum:", width="stretch"):
+            st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = 88, 85, 78
+            push_telemetry_step(88, 85, 78, trigger_ai=True)
+            st.rerun()
+
+        if st.button("Attention Drop", icon=":material/trending_down:", width="stretch"):
+            st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = 44, 48, 12
+            push_telemetry_step(44, 48, 12, trigger_ai=True)
+            st.rerun()
+
+        if st.button("Quiet Note-Taking", icon=":material/edit_note:", width="stretch"):
+            st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = 75, 80, 18
+            push_telemetry_step(75, 80, 18, trigger_ai=True)
+            st.rerun()
+
+        st.markdown("---")
+        g_v = st.slider("Visual Attention (%)", 0, 100, int(st.session_state.sim_gaze))
+        m_v = st.slider("Posture & Activity (%)", 0, 100, int(st.session_state.sim_move))
+        a_v = st.slider("Class Discussion (%)", 0, 100, int(st.session_state.sim_audio))
+        st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = g_v, m_v, a_v
+
+        if st.button("Update Live Metrics", icon=":material/tune:", type="primary", width="stretch"):
+            push_telemetry_step(g_v, m_v, a_v, trigger_ai=False)
+            st.rerun()
+
+        if st.button("Test Focus Alert", icon=":material/tab_unselected:", width="stretch"):
+            sname, _, act = record_focus_violation(
+                st.session_state.active_student_id,
+                "Left Classroom Window",
+                round(random.uniform(8.0, 22.0), 1),
+            )
+            if sname:
+                st.toast(f"{sname}: {act}")
+            st.rerun()
+
+    with st.expander("Session Settings", expanded=False):
+        st.session_state.max_strikes = st.slider("Focus Alert Limit", 1, 5, int(st.session_state.max_strikes))
+        sched_min = st.slider("Session Duration (min)", 5, 60, int(st.session_state.scheduled_minutes), 5)
+        if sched_min != st.session_state.scheduled_minutes:
+            st.session_state.scheduled_minutes = sched_min
+            st.session_state.session_remaining_sec = sched_min * 60
+
+    st.write("")
     st.markdown(
         f"""
-        <div class="audit-panel">
-            <div style="font-weight:700;color:#F8FAFC;margin-bottom:4px;">Edge Privacy &amp; Trust Audit</div>
-            <div><span class="dot-ok">&bull;</span>100% On-Device Processing</div>
-            <div><span class="dot-ok">&bull;</span>0 Raw Images Stored (512-D)</div>
-            <div><span class="dot-ok">&bull;</span>Role-Masked Parent Portal</div>
-            <hr style="border:0;border-top:1px solid rgba(148,163,184,0.12);margin:6px 0;">
-            <div><span class="dot-ok">&bull;</span>Vision: InsightFace + Cascades</div>
-            <div><span class="{audio_cls}">&bull;</span>Audio: {"WebRTC VAD" if diag["audio_ok"] else "Visual-Only (Cloud)"}</div>
-            <div><span class="{ollama_cls}">&bull;</span>Coach: {diag["ollama_label"]}</div>
+        <div class="privacy-box">
+            <div style="display:flex;align-items:center;gap:6px;font-weight:600;color:#0F172A;margin-bottom:4px;">
+                {SVG_ICONS["lock"]}<span>Privacy &amp; Compliance</span>
+            </div>
+            <div><span class="dot-ok">&bull;</span>On-device processing active</div>
+            <div><span class="dot-ok">&bull;</span>Zero student photos stored</div>
+            <div><span class="dot-ok">&bull;</span>Guardian data isolation enabled</div>
+            <div><span class="{'dot-ok' if diag['ai_local'] else 'dot-muted'}">&bull;</span>Teaching Assistant: {'Local AI' if diag['ai_local'] else 'Smart Mode'}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-# --- Trigger One-Shot Auto-PDF Browser Download if Session Just Completed ---
+# Trigger automatic PDF download when a scheduled session completes
 if st.session_state.auto_pdf_payload:
     fname, b64_data = st.session_state.auto_pdf_payload
     components.html(render_auto_pdf_download_script(fname, b64_data), height=0)
     st.session_state.auto_pdf_payload = None
 
-# --- Top Commercial Navbar ---
+# Top Workspace Bar
 role_filter = {"Instructor / Mentor": "Instructor", "Student": "Student", "Parent / Guardian": "Parent"}[st.session_state.user_role]
 unread_df = get_notifications(recipient_role=role_filter)
 unread_cnt = int((unread_df["acknowledged"] == 0).sum()) if not unread_df.empty else 0
-status_badge = "LIVE STREAM ACTIVE" if st.session_state.stream_playing else ("EDGE AI READY" if diag["ollama_ok"] else "CLOUD DEMO READY")
+status_badge = "Session Live" if st.session_state.stream_playing else "Ready"
 st.markdown(render_top_nav_html(st.session_state.active_lobby, st.session_state.user_role, status_badge, unread_cnt), unsafe_allow_html=True)
 
 if st.session_state.last_generated_pdf:
     pdf_name, pdf_raw, _ = st.session_state.last_generated_pdf
-    b_l, b_r = st.columns([3, 1], vertical_alignment="center")
+    b_l, b_r = st.columns([3.2, 1], vertical_alignment="center")
     with b_l:
-        st.success(f"Scheduled session completed — **{pdf_name}** was auto-generated, archived, and dispatched for download.")
+        st.success(f"Session completed — **{pdf_name}** was automatically generated and saved to your Reports archive.")
     with b_r:
-        st.download_button("Re-Download Auto PDF", data=pdf_raw, file_name=pdf_name, mime="application/pdf", icon=":material/picture_as_pdf:", type="primary", width="stretch")
+        st.download_button("Download PDF", data=pdf_raw, file_name=pdf_name, mime="application/pdf", icon=":material/picture_as_pdf:", type="primary", width="stretch")
 
 
 # ==============================================================================
-# MODULE A: LIVE COMMAND CENTER + PROCTORING + AUTO-PDF (FRAGMENT ENGINE)
+# TAB 1: LIVE SESSION (FOCUSED ON TIMER + 4 ENGAGEMENT METRICS)
 # ==============================================================================
-def _render_command_center_body():
+def _render_live_session_body():
     lobby = get_active_lobby_obj()
     if st.session_state.drop_alert:
         st.markdown(f'<div class="alert-banner">{SVG_ICONS["alert"]}<span>{st.session_state.drop_alert}</span></div>', unsafe_allow_html=True)
 
-    # Scheduled Session Control & Auto-PDF Strip
+    # Focused Session Timer Bar
     with st.container(border=True):
-        sc1, sc2, sc3, sc4, sc5 = st.columns([1.4, 0.9, 0.85, 0.95, 1.35], vertical_alignment="center")
+        sc1, sc2, sc3, sc4, sc5 = st.columns([1.8, 0.9, 0.85, 0.7, 1.25], vertical_alignment="center")
         mins, secs = divmod(int(st.session_state.session_remaining_sec), 60)
         with sc1:
-            st.markdown(f'<div class="sec-title">{lobby["active_subject"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="sec-sub" style="margin:0;">Host: {lobby["active_host"]} &bull; {lobby["lobby_code"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="sec-title" style="font-size:1.02rem;">{lobby["active_subject"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="sec-sub" style="margin:0;">{lobby["active_host"]} &middot; {lobby["name"]}</div>', unsafe_allow_html=True)
         with sc2:
             st.markdown(
-                f'<div style="text-align:center;"><div style="font-size:0.68rem;color:#94A3B8;text-transform:uppercase;">Scheduled Timer</div>'
-                f'<div class="countdown-val" style="font-size:1.35rem;font-weight:700;color:#38BDF8;">{mins:02d}:{secs:02d}</div></div>',
+                f'<div style="text-align:center;">'
+                f'<div style="font-size:0.70rem;font-weight:500;color:#64748B;">Time Remaining</div>'
+                f'<div class="timer-val" style="font-size:1.45rem;font-weight:700;letter-spacing:-0.02em;color:#0F172A;">{mins:02d}:{secs:02d}</div>'
+                f"</div>",
                 unsafe_allow_html=True,
             )
         with sc3:
             if st.session_state.stream_playing:
-                if st.button("Pause Stream", icon=":material/pause:", width="stretch"):
+                if st.button("Pause", icon=":material/pause:", width="stretch"):
                     st.session_state.stream_playing = False
                     st.rerun()
             else:
-                if st.button("Play Stream", icon=":material/play_arrow:", type="primary", width="stretch"):
+                if st.button("Start Live", icon=":material/play_arrow:", type="primary", width="stretch"):
                     st.session_state.stream_playing = True
                     st.rerun()
         with sc4:
             st.session_state.stream_speed = st.selectbox("Speed", ["1x", "2x"], index=0 if st.session_state.stream_speed == "1x" else 1, label_visibility="collapsed")
         with sc5:
-            if st.button("End Session & Auto-PDF", icon=":material/picture_as_pdf:", width="stretch"):
+            if st.button("End & Export PDF", icon=":material/picture_as_pdf:", width="stretch"):
                 finalize_and_auto_generate_pdf()
                 st.rerun()
 
-    # 4 Animated KPI Cards with Mini Sparklines
+    # Four Clean Engagement Metric Cards
     m = st.session_state.latest_metrics
     d = compute_deltas(m, st.session_state.prev_metrics)
     hist = st.session_state.engagement_history
     k1, k2, k3, k4 = st.columns(4)
     k1.markdown(render_kpi_html("Overall Engagement", m["total_engagement"], d["total_engagement"], [x["Overall"] for x in hist]), unsafe_allow_html=True)
-    k2.markdown(render_kpi_html("Visual Gaze Focus", m["gaze_score"], d["gaze_score"], [x["Visual Gaze"] for x in hist]), unsafe_allow_html=True)
-    k3.markdown(render_kpi_html("Posture & Motion", m["movement_score"], d["movement_score"], [x["Posture & Motion"] for x in hist]), unsafe_allow_html=True)
-    k4.markdown(render_kpi_html("Vocal Interaction", m["audio_score"], d["audio_score"], [x["Vocal Audio"] for x in hist]), unsafe_allow_html=True)
+    k2.markdown(render_kpi_html("Visual Attention", m["gaze_score"], d["gaze_score"], [x["Visual Attention"] for x in hist]), unsafe_allow_html=True)
+    k3.markdown(render_kpi_html("Posture & Activity", m["movement_score"], d["movement_score"], [x["Posture & Activity"] for x in hist]), unsafe_allow_html=True)
+    k4.markdown(render_kpi_html("Class Discussion", m["audio_score"], d["audio_score"], [x["Class Discussion"] for x in hist]), unsafe_allow_html=True)
     st.write("")
 
-    col_left, col_right = st.columns([1.3, 1], gap="medium")
+    col_left, col_right = st.columns([1.35, 1], gap="medium")
 
     with col_left:
-        # Scenario Presets + Signal Sliders
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Multimodal Telemetry &amp; Scenario Controls</p>', unsafe_allow_html=True)
-            p1, p2, p3 = st.columns(3)
-            with p1:
-                if st.button("Active Q&A", icon=":material/forum:", width="stretch"):
-                    st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = 88, 85, 78
-                    push_telemetry_step(88, 85, 78, trigger_ai=True)
-                    st.rerun(scope="fragment")
-            with p2:
-                if st.button("Mid-Lecture Drift", icon=":material/trending_down:", width="stretch"):
-                    st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = 44, 48, 12
-                    push_telemetry_step(44, 48, 12, trigger_ai=True)
-                    st.rerun(scope="fragment")
-            with p3:
-                if st.button("Silent Note-Taking", icon=":material/edit_note:", width="stretch"):
-                    st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = 75, 80, 18
-                    push_telemetry_step(75, 80, 18, trigger_ai=True)
-                    st.rerun(scope="fragment")
-
-            sl1, sl2, sl3 = st.columns(3)
-            with sl1:
-                g_v = st.slider("Visual Gaze %", 0, 100, int(st.session_state.sim_gaze))
-            with sl2:
-                m_v = st.slider("Posture %", 0, 100, int(st.session_state.sim_move))
-            with sl3:
-                a_v = st.slider("Vocal Audio %", 0, 100, int(st.session_state.sim_audio))
-            st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = g_v, m_v, a_v
-
+            st.markdown('<p class="sec-title">Engagement Trends</p>', unsafe_allow_html=True)
+            st.markdown(
+                '<p class="sec-sub">Real-time class attention across visual focus, posture, and discussion. Open <strong>Demo Controls</strong> in the sidebar to test scenarios.</p>',
+                unsafe_allow_html=True,
+            )
             st.plotly_chart(build_spline_fig(hist), width="stretch", config=PLOTLY_CFG, key=f"spline_{len(hist)}_{m['total_engagement']}")
 
-        # Interactive Classroom Attention Grid + Proctoring Controls
         with st.container(border=True):
-            ag1, ag2 = st.columns([1.4, 1], vertical_alignment="center")
-            with ag1:
-                st.markdown('<p class="sec-title">Live Classroom Attention &amp; Proctoring Grid</p>', unsafe_allow_html=True)
-                st.markdown('<p class="sec-sub">Per-student presence verification &amp; tab-switch strike enforcement.</p>', unsafe_allow_html=True)
-            with ag2:
-                if st.button("Simulate Tab-Switch Strike", icon=":material/tab_unselected:", width="stretch"):
-                    target_sid = st.session_state.active_student_id
-                    sname, s_cnt, act = record_focus_violation(target_sid, "Tab Switch / Desktop Exit", round(random.uniform(8.0, 22.0), 1))
-                    if sname:
-                        st.toast(f"{sname}: {act}")
-                    st.rerun(scope="fragment")
-
+            st.markdown('<p class="sec-title">Live Classroom Attendance</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Continuous attendance verification and window focus status for enrolled students.</p>', unsafe_allow_html=True)
             g_c1, g_c2 = st.columns(2)
             for idx, seat in enumerate(st.session_state.live_seats):
                 target_col = g_c1 if idx % 2 == 0 else g_c2
@@ -597,37 +599,23 @@ def _render_command_center_body():
                 )
 
     with col_right:
-        # Real Browser Window-Focus Proctoring Monitor
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Anti-Cheat Window-Focus Proctoring</p>', unsafe_allow_html=True)
-            components.html(render_focus_guard_widget(int(st.session_state.max_strikes)), height=145)
-            df_inc = get_proctor_incidents()
-            if not df_inc.empty:
-                st.dataframe(
-                    df_inc[["timestamp", "student_name", "strike_count", "action_taken"]].head(4).rename(
-                        columns={"timestamp": "Time", "student_name": "Student", "strike_count": "Strikes", "action_taken": "Enforcement"}
-                    ),
-                    width="stretch",
-                    hide_index=True,
-                )
-
-        # Actionable AI Teaching Coach
-        with st.container(border=True):
-            ch1, ch2 = st.columns([1.15, 1], vertical_alignment="center")
+            ch1, ch2 = st.columns([1.2, 1], vertical_alignment="center")
             with ch1:
-                st.markdown('<p class="sec-title" style="margin:0;">AI Teaching Coach</p>', unsafe_allow_html=True)
+                st.markdown('<p class="sec-title" style="margin:0;">Teaching Assistant</p>', unsafe_allow_html=True)
             with ch2:
-                if st.button("Ask Coach Now", icon=":material/auto_awesome:", type="primary", width="stretch"):
+                if st.button("Get Insights", icon=":material/auto_awesome:", type="primary", width="stretch"):
                     push_telemetry_step(st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio, trigger_ai=True)
                     st.rerun(scope="fragment")
+            st.markdown('<p class="sec-sub" style="margin-top:4px;">Actionable pacing and engagement recommendations for this session.</p>', unsafe_allow_html=True)
 
             for idx, item in enumerate(st.session_state.suggestion_feed[:3]):
                 st.markdown(render_coach_card_html(item["category"], item["time"], item["text"]), unsafe_allow_html=True)
-                ac1, ac2, _ = st.columns([1, 1, 1.4])
+                ac1, ac2, _ = st.columns([1, 1, 1.3])
                 with ac1:
                     if not item.get("applied") and st.button("Mark Applied", key=f"app_{idx}", width="stretch"):
                         item["applied"] = True
-                        st.toast("Intervention marked as applied.")
+                        st.toast("Marked as applied.")
                         st.rerun(scope="fragment")
                 with ac2:
                     if st.button("Dismiss", key=f"dis_{idx}", width="stretch"):
@@ -635,11 +623,11 @@ def _render_command_center_body():
                         st.rerun(scope="fragment")
 
             with st.form("quick_coach_form", clear_on_submit=True, border=False):
-                qf1, qf2 = st.columns([3.2, 1])
+                qf1, qf2 = st.columns([3.3, 1])
                 with qf1:
-                    q_txt = st.text_input("Ask Coach", placeholder="Ask AttendAI Coach...", label_visibility="collapsed")
+                    q_txt = st.text_input("Ask Assistant", placeholder="Ask for a quick class activity or pacing tip...", label_visibility="collapsed")
                 with qf2:
-                    q_sub = st.form_submit_button("Ask", icon=":material/send:", width="stretch")
+                    q_sub = st.form_submit_button("Send", icon=":material/send:", width="stretch")
                 if q_sub and q_txt.strip():
                     agent = TeachingAdvisorAgent()
                     adv = agent.generate_advice(
@@ -651,61 +639,75 @@ def _render_command_center_body():
                     )
                     st.session_state.suggestion_feed.insert(
                         0,
-                        {"category": adv["category"], "time": datetime.now().strftime("%H:%M:%S"), "text": adv["text"], "applied": False},
+                        {"category": adv["category"], "time": datetime.now().strftime("%H:%M"), "text": adv["text"], "applied": False},
                     )
                     st.rerun(scope="fragment")
 
+        with st.container(border=True):
+            st.markdown('<p class="sec-title">Window Focus Integrity</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Flags repeated tab switches and updates attendance automatically once the limit is reached.</p>', unsafe_allow_html=True)
+            components.html(render_focus_guard_widget(int(st.session_state.max_strikes)), height=142)
+            df_inc = get_proctor_incidents()
+            if not df_inc.empty:
+                st.dataframe(
+                    df_inc[["timestamp", "student_name", "strike_count", "action_taken"]].head(4).rename(
+                        columns={"timestamp": "Time", "student_name": "Student", "strike_count": "Alerts", "action_taken": "Status"}
+                    ),
+                    width="stretch",
+                    hide_index=True,
+                )
+
 
 @st.fragment(run_every=2)
-def render_command_center_live():
+def render_live_session_streaming():
     if st.session_state.stream_playing:
         auto_tick_simulation()
-    _render_command_center_body()
+    _render_live_session_body()
 
 
 @st.fragment
-def render_command_center_paused():
-    _render_command_center_body()
+def render_live_session_paused():
+    _render_live_session_body()
 
 
 # ==============================================================================
-# MODULE B: GAME-STYLE MULTI-TEACHER CLASSROOM LOBBIES
+# TAB 2: COURSE ROOMS (MULTI-TEACHER COLLABORATION)
 # ==============================================================================
 @st.fragment
-def render_lobbies_module():
-    l_top1, l_top2, l_top3 = st.columns([2, 1, 1], vertical_alignment="center")
+def render_course_rooms():
+    l_top1, l_top2, l_top3 = st.columns([2.1, 1, 1], vertical_alignment="center")
     with l_top1:
-        st.markdown('<p class="sec-title" style="font-size:1.05rem;">Multi-Teacher Classroom Lobbies</p>', unsafe_allow_html=True)
-        st.markdown('<p class="sec-sub">Game-style persistent cohort rooms where multiple subject teachers co-host attendance and share assignments.</p>', unsafe_allow_html=True)
+        st.markdown('<p class="sec-title" style="font-size:1.05rem;">Course Rooms</p>', unsafe_allow_html=True)
+        st.markdown('<p class="sec-sub">Shared cohort rooms where subject faculty co-host live attendance and post assignments together.</p>', unsafe_allow_html=True)
 
     with l_top2:
-        with st.popover("Create New Lobby", icon=":material/add_circle:", width="stretch"):
-            c_code = st.text_input("Lobby Join Code", placeholder="LOBBY-ME204")
-            c_name = st.text_input("Room Name", placeholder="Mechanical Sem IV")
-            c_cohort = st.text_input("Cohort", placeholder="B.Tech ME • Sec B")
-            c_host = st.text_input("Host Teacher", value="Dr. Vikram Deshmukh")
-            c_sub = st.text_input("Primary Subject", placeholder="Thermodynamics")
-            if st.button("Launch Lobby Room", type="primary", width="stretch"):
+        with st.popover("New Room", icon=":material/add:", width="stretch"):
+            c_code = st.text_input("Room Code", placeholder="ROOM-ME204")
+            c_name = st.text_input("Room Name", placeholder="Mechanical Semester IV")
+            c_cohort = st.text_input("Cohort", placeholder="B.Tech ME · Section B")
+            c_host = st.text_input("Lead Instructor", value="Dr. Vikram Deshmukh")
+            c_sub = st.text_input("Subject", placeholder="Thermodynamics")
+            if st.button("Create Room", type="primary", width="stretch"):
                 if c_code.strip() and c_name.strip() and c_sub.strip():
                     if create_lobby(c_code.strip(), c_name.strip(), c_cohort.strip() or "Cohort A", c_host.strip(), c_sub.strip()):
                         st.session_state.active_lobby = c_code.strip().upper()
-                        st.toast(f"Created lobby {c_code.strip().upper()}!")
+                        st.toast(f"Created {c_code.strip().upper()}.")
                         st.rerun()
                     else:
-                        st.error("Lobby code already exists.")
+                        st.error("A room with that code already exists.")
 
     with l_top3:
-        with st.popover("Join Lobby by Code", icon=":material/login:", width="stretch"):
-            j_code = st.text_input("Enter Room Code", value=st.session_state.active_lobby)
-            j_teacher = st.text_input("Teacher Name", placeholder="Prof. Kavita Joshi")
-            j_sub = st.text_input("Subject Taught", placeholder="Control Systems")
-            if st.button("Join Room as Teacher", type="primary", width="stretch"):
+        with st.popover("Join Room", icon=":material/login:", width="stretch"):
+            j_code = st.text_input("Room Code", value=st.session_state.active_lobby)
+            j_teacher = st.text_input("Instructor Name", placeholder="Prof. Kavita Joshi")
+            j_sub = st.text_input("Subject", placeholder="Control Systems")
+            if st.button("Join as Instructor", type="primary", width="stretch"):
                 if j_code.strip() and j_teacher.strip() and j_sub.strip():
                     if join_lobby_teacher(j_code.strip(), j_teacher.strip(), j_sub.strip()):
-                        st.toast(f"{j_teacher} joined {j_code.upper()}!")
+                        st.toast(f"{j_teacher} joined {j_code.upper()}.")
                         st.rerun(scope="fragment")
                     else:
-                        st.error("Lobby code not found.")
+                        st.error("Room code not found.")
 
     active_lb = get_active_lobby_obj()
     col_l, col_r = st.columns([1.05, 1.35], gap="medium")
@@ -713,23 +715,23 @@ def render_lobbies_module():
     with col_l:
         with st.container(border=True):
             st.markdown(
-                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
-                f'<span class="sec-title">{active_lb["name"]}</span><span class="lobby-code">{active_lb["lobby_code"]}</span>'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+                f'<span class="sec-title">{active_lb["name"]}</span><span class="room-code">{active_lb["lobby_code"]}</span>'
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            st.markdown(f'<p class="sec-sub">{active_lb["cohort"]} &bull; Live Host: <strong>{active_lb["active_host"]}</strong> ({active_lb["active_subject"]})</p>', unsafe_allow_html=True)
+            st.markdown(f'<p class="sec-sub">{active_lb["cohort"]} &middot; Active Host: <strong>{active_lb["active_host"]}</strong></p>', unsafe_allow_html=True)
 
             teachers = get_lobby_teachers(active_lb["lobby_code"])
-            st.markdown("**Connected Subject Teachers in Room**")
+            st.markdown("**Faculty in Room**")
             for t in teachers:
                 tc1, tc2 = st.columns([2.2, 1], vertical_alignment="center")
-                badge = '<span style="color:#34D399;font-weight:700;">● LIVE HOST</span>' if t["is_live"] else '<span style="color:#94A3B8;">● Ready</span>'
+                badge = '<span style="color:#047857;font-weight:600;font-size:0.78rem;">● Hosting</span>' if t["is_live"] else '<span style="color:#64748B;font-size:0.78rem;">● Available</span>'
                 with tc1:
                     st.markdown(f"**{t['teacher_name']}** — {t['subject']} &nbsp; {badge}", unsafe_allow_html=True)
                 with tc2:
                     if not t["is_live"] and st.session_state.user_role == "Instructor / Mentor":
-                        if st.button("Take Host", key=f"host_{t['id']}", width="stretch"):
+                        if st.button("Host Next", key=f"host_{t['id']}", width="stretch"):
                             set_lobby_active_host(active_lb["lobby_code"], t["teacher_name"], t["subject"])
                             st.toast(f"{t['teacher_name']} is now hosting {t['subject']}.")
                             st.rerun()
@@ -738,27 +740,27 @@ def render_lobbies_module():
         with st.container(border=True):
             ah1, ah2 = st.columns([1.8, 1], vertical_alignment="center")
             with ah1:
-                st.markdown('<p class="sec-title">Shared Lobby Assignment Board</p>', unsafe_allow_html=True)
-                st.markdown('<p class="sec-sub">Cross-subject tasks shared across all teachers &amp; students in this room.</p>', unsafe_allow_html=True)
+                st.markdown('<p class="sec-title">Shared Assignments</p>', unsafe_allow_html=True)
+                st.markdown('<p class="sec-sub">Coursework and deadlines shared across all subjects in this cohort.</p>', unsafe_allow_html=True)
             with ah2:
                 if st.session_state.user_role == "Instructor / Mentor":
-                    with st.popover("Post Assignment", icon=":material/assignment_add:", width="stretch"):
+                    with st.popover("New Assignment", icon=":material/assignment_add:", width="stretch"):
                         a_sub = st.text_input("Subject", value=active_lb["active_subject"])
-                        a_teacher = st.text_input("Faculty", value=active_lb["active_host"])
-                        a_title = st.text_input("Assignment Title", placeholder="Lab Sheet 4: FFT Analysis")
+                        a_teacher = st.text_input("Instructor", value=active_lb["active_host"])
+                        a_title = st.text_input("Title", placeholder="Lab Sheet 4: FFT Analysis")
                         a_due = st.date_input("Due Date", value=datetime.now() + timedelta(days=5))
-                        if st.button("Publish to Lobby", type="primary", width="stretch"):
+                        if st.button("Publish", type="primary", width="stretch"):
                             if a_title.strip():
                                 add_lobby_assignment(active_lb["lobby_code"], a_sub, a_teacher, a_title.strip(), str(a_due))
-                                st.toast("Assignment published to lobby!")
+                                st.toast("Assignment published.")
                                 st.rerun(scope="fragment")
 
             df_asg = get_lobby_assignments(active_lb["lobby_code"])
             if not df_asg.empty:
-                df_asg["Submissions"] = df_asg.apply(lambda r: f"{r['submitted_count']}/{r['total_students']}", axis=1)
+                df_asg["Submitted"] = df_asg.apply(lambda r: f"{r['submitted_count']}/{r['total_students']}", axis=1)
                 st.dataframe(
-                    df_asg[["subject", "title", "teacher_name", "due_date", "Submissions", "status"]].rename(
-                        columns={"subject": "Subject", "title": "Assignment", "teacher_name": "Teacher", "due_date": "Due", "status": "Status"}
+                    df_asg[["subject", "title", "teacher_name", "due_date", "Submitted", "status"]].rename(
+                        columns={"subject": "Subject", "title": "Assignment", "teacher_name": "Instructor", "due_date": "Due Date", "status": "Status"}
                     ),
                     width="stretch",
                     hide_index=True,
@@ -766,52 +768,48 @@ def render_lobbies_module():
 
 
 # ==============================================================================
-# MODULE C: THEORY vs PRACTICAL CALCULATOR, <75% WARNINGS, DAILY DIGEST & DISPUTES
+# TAB 3: ATTENDANCE & GRADES (THEORY vs PRACTICAL, <75% ALERTS & REVIEW DESK)
 # ==============================================================================
 @st.fragment
-def render_calculator_and_disputes():
+def render_attendance_and_grades():
     cum_df = compute_student_cumulative_summary()
     if cum_df.empty:
-        st.info("No academic records found.")
+        st.info("No attendance records available yet.")
         return
 
-    # Student selector (Instructors can inspect anyone; Students/Parents see active profile)
     if st.session_state.user_role == "Instructor / Mentor":
-        s_opts = {f"{r['student_id']} — {r['student_name']} ({r['cumulative_pct']}%)": r["student_id"] for _, r in cum_df.iterrows()}
+        s_opts = {f"{r['student_name']} ({r['student_id']}) — {r['cumulative_pct']}%": r["student_id"] for _, r in cum_df.iterrows()}
         inv_s = {v: k for k, v in s_opts.items()}
-        sel_s = st.selectbox("Inspect Student Attendance Calculator", list(s_opts.keys()), index=list(s_opts.keys()).index(inv_s.get(st.session_state.active_student_id, list(s_opts.keys())[0])))
+        sel_s = st.selectbox("Select Student", list(s_opts.keys()), index=list(s_opts.keys()).index(inv_s.get(st.session_state.active_student_id, list(s_opts.keys())[0])))
         target_sid = s_opts[sel_s]
     else:
         target_sid = st.session_state.active_student_id
 
     row_s = cum_df[cum_df["student_id"] == target_sid].iloc[0]
 
-    # Automated <75% Dual Warning Banner
     if row_s["cumulative_pct"] < 75.0:
         st.markdown(
             f'<div class="alert-banner">{SVG_ICONS["alert"]}<span>'
-            f'BELOW 75% WARNING ACTIVE — {row_s["student_name"]} ({target_sid}) is at {row_s["cumulative_pct"]}% cumulative attendance. '
-            f'Formal shortage alerts have been dispatched to BOTH the Student Dashboard and Parent Portal. ({row_s["recovery"]} consecutive classes needed.)'
+            f'Attendance Below 75% — {row_s["student_name"]} is currently at {row_s["cumulative_pct"]}%. '
+            f'Automatic warnings have been sent to both the Student and Guardian portals ({row_s["recovery"]} needed to restore eligibility).'
             f"</span></div>",
             unsafe_allow_html=True,
         )
 
-    # Top Cumulative & Grade Summary Row
     m1, m2, m3, m4 = st.columns(4)
     m1.markdown(render_kpi_html("Cumulative Attendance", row_s["cumulative_pct"], None, [72, 74, row_s["cumulative_pct"]]), unsafe_allow_html=True)
-    m2.markdown(render_kpi_html("Theory Lectures Overall", row_s["theory_pct"], None, [75, 76, row_s["theory_pct"]]), unsafe_allow_html=True)
-    m3.markdown(render_kpi_html("Practical Labs Overall", row_s["practical_pct"], None, [78, 79, row_s["practical_pct"]]), unsafe_allow_html=True)
+    m2.markdown(render_kpi_html("Theory Lectures", row_s["theory_pct"], None, [75, 76, row_s["theory_pct"]]), unsafe_allow_html=True)
+    m3.markdown(render_kpi_html("Practical Labs", row_s["practical_pct"], None, [78, 79, row_s["practical_pct"]]), unsafe_allow_html=True)
     with m4:
-        g_col = "#10B981" if row_s["cumulative_pct"] >= 85 else ("#F59E0B" if row_s["cumulative_pct"] >= 75 else "#EF4444")
+        b_cls = "badge-optimal" if row_s["cumulative_pct"] >= 85 else ("badge-watch" if row_s["cumulative_pct"] >= 75 else "badge-risk")
         st.markdown(
-            f'<div class="kpi-card"><div class="kpi-top"><span class="kpi-label">Internal Grade</span><span class="kpi-pill kpi-{"optimal" if row_s["cumulative_pct"]>=85 else ("watch" if row_s["cumulative_pct"]>=75 else "risk")}">{row_s["risk_tier"]}</span></div>'
-            f'<div style="font-size:1.18rem;font-weight:800;color:{g_col};margin-top:6px;">{row_s["internal_grade"]}</div>'
-            f'<div class="mono" style="font-size:0.74rem;color:#94A3B8;margin-top:4px;">What-If: {row_s["recovery"]}</div></div>',
+            f'<div class="kpi-card"><div class="kpi-top"><span class="kpi-label">Attendance Grade</span><span class="kpi-badge {b_cls}">{row_s["risk_tier"]}</span></div>'
+            f'<div style="font-size:1.15rem;font-weight:700;color:#0F172A;margin-top:6px;">{row_s["internal_grade"]}</div>'
+            f'<div style="font-size:0.74rem;color:#64748B;margin-top:4px;">Recovery target: {row_s["recovery"]}</div></div>',
             unsafe_allow_html=True,
         )
     st.write("")
 
-    # Subject-Wise Theory vs Practical Breakdown Table
     sub_df = get_student_subject_records(target_sid)
     calc_rows = []
     for _, sr in sub_df.iterrows():
@@ -825,17 +823,18 @@ def render_calculator_and_disputes():
         calc_rows.append({
             "Code": sr["subject_code"],
             "Subject": sr["subject_name"],
-            "Theory (Att/Tot)": f"{sr['theory_attended']}/{sr['theory_total']}",
+            "Theory": f"{sr['theory_attended']}/{sr['theory_total']}",
             "Theory %": th_p,
-            "Practical (Att/Tot)": f"{sr['practical_attended']}/{sr['practical_total']}",
+            "Practical": f"{sr['practical_attended']}/{sr['practical_total']}",
             "Practical %": pr_p,
-            "Subject %": comb_p,
+            "Overall %": comb_p,
             "Internal Grade": grade,
-            "75% Recovery": f"Attend +{cnt}" if mode == "Need" else f"{cnt} buffer",
+            "75% Goal": f"Attend +{cnt}" if mode == "Need" else f"{cnt} buffer",
         })
 
     with st.container(border=True):
-        st.markdown(f'<p class="sec-title">Subject-Wise Attendance Calculator (Theory vs. Practical) — {row_s["student_name"]}</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="sec-title">Subject Breakdown — {row_s["student_name"]}</p>', unsafe_allow_html=True)
+        st.markdown('<p class="sec-sub">Separate tracking for Theory lectures and Practical lab sessions with internal grade calculation.</p>', unsafe_allow_html=True)
         st.dataframe(
             pd.DataFrame(calc_rows),
             width="stretch",
@@ -843,24 +842,23 @@ def render_calculator_and_disputes():
             column_config={
                 "Theory %": st.column_config.ProgressColumn("Theory %", min_value=0, max_value=100, format="%.1f%%"),
                 "Practical %": st.column_config.ProgressColumn("Practical %", min_value=0, max_value=100, format="%.1f%%"),
-                "Subject %": st.column_config.NumberColumn("Subject %", format="%.1f%%"),
+                "Overall %": st.column_config.NumberColumn("Overall %", format="%.1f%%"),
             },
         )
 
-    # Daily Attendance Summary Digest + Student Dispute / Flag Request Desk
     d_col1, d_col2 = st.columns([1.25, 1], gap="medium")
 
     with d_col1:
         with st.container(border=True):
             dh1, dh2 = st.columns([1.8, 1], vertical_alignment="center")
             with dh1:
-                st.markdown('<p class="sec-title">Daily Attendance Summary Digest</p>', unsafe_allow_html=True)
-                st.markdown(f'<p class="sec-sub">End-of-day class timeline for {datetime.now().strftime("%Y-%m-%d")}.</p>', unsafe_allow_html=True)
+                st.markdown('<p class="sec-title">Daily Attendance Summary</p>', unsafe_allow_html=True)
+                st.markdown(f'<p class="sec-sub">Session log for {datetime.now().strftime("%B %d, %Y")}.</p>', unsafe_allow_html=True)
             df_daily = get_daily_logs(None if st.session_state.user_role == "Instructor / Mentor" else target_sid)
             with dh2:
                 if not df_daily.empty:
                     st.download_button(
-                        "Export Daily CSV",
+                        "Export CSV",
                         data=df_daily.to_csv(index=False).encode("utf-8"),
                         file_name=f"AttendAI_DailySummary_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv",
@@ -871,7 +869,7 @@ def render_calculator_and_disputes():
             if not df_daily.empty:
                 st.dataframe(
                     df_daily[["time_slot", "student_name", "subject_name", "session_type", "status", "proctor_strikes"]].rename(
-                        columns={"time_slot": "Slot", "student_name": "Student", "subject_name": "Subject", "session_type": "Type", "status": "Status", "proctor_strikes": "Strikes"}
+                        columns={"time_slot": "Time", "student_name": "Student", "subject_name": "Subject", "session_type": "Type", "status": "Status", "proctor_strikes": "Focus Alerts"}
                     ),
                     width="stretch",
                     hide_index=True,
@@ -879,25 +877,24 @@ def render_calculator_and_disputes():
 
     with d_col2:
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Attendance Flag &amp; Dispute Resolution Desk</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Flag missed/incorrect attendance to Mentor or Subject Teacher for real-time recalculation.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-title">Attendance Correction Requests</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Students can flag missed or incorrect attendance directly to their Mentor or Subject Instructor.</p>', unsafe_allow_html=True)
 
-            # Student Flag Submission Form
             if st.session_state.user_role in ("Student", "Instructor / Mentor"):
-                with st.expander("Flag / Request Attendance Correction", expanded=(st.session_state.user_role == "Student")):
+                with st.expander("Flag a Session for Review", expanded=(st.session_state.user_role == "Student")):
                     stu_daily = get_daily_logs(target_sid)
                     flag_opts = (
-                        {f"#{r['id']} | {r['subject_name']} ({r['session_type']}) — {r['status']}": r for _, r in stu_daily.iterrows()}
+                        {f"{r['subject_name']} ({r['session_type']}) · {r['status']} [#{r['id']}]": r for _, r in stu_daily.iterrows()}
                         if not stu_daily.empty
                         else {}
                     )
                     if flag_opts:
-                        pick_lbl = st.selectbox("Select Session to Flag", list(flag_opts.keys()))
+                        pick_lbl = st.selectbox("Session", list(flag_opts.keys()))
                         picked = flag_opts[pick_lbl]
-                        route_to = st.radio("Route Request Directly To", ["Assigned Mentor", "Subject Teacher"], horizontal=True)
+                        route_to = st.radio("Send Request To", ["Assigned Mentor", "Subject Instructor"], horizontal=True)
                         recip_name = "Dr. Vikram Deshmukh (Mentor)" if route_to == "Assigned Mentor" else picked["teacher_name"]
-                        reason_txt = st.text_area("Reason / Evidence", placeholder="e.g., Present in Lab Bay 2, camera glare, or approved medical duty.")
-                        if st.button("Submit Correction Flag", icon=":material/flag:", type="primary", width="stretch"):
+                        reason_txt = st.text_area("Reason", placeholder="Briefly explain why this attendance record should be reviewed.")
+                        if st.button("Submit Request", icon=":material/flag:", type="primary", width="stretch"):
                             if reason_txt.strip():
                                 create_dispute_ticket(
                                     int(picked["id"]),
@@ -909,42 +906,41 @@ def render_calculator_and_disputes():
                                     recip_name,
                                     reason_txt.strip(),
                                 )
-                                st.toast(f"Flag sent to {recip_name}!")
+                                st.toast(f"Request routed to {recip_name}.")
                                 st.rerun(scope="fragment")
 
-            # Ticket Queue (Faculty can Approve & Recalculate in real time)
             tickets_df = get_dispute_tickets(None if st.session_state.user_role == "Instructor / Mentor" else target_sid)
             if tickets_df.empty:
-                st.caption("No active attendance correction tickets.")
+                st.caption("No open attendance correction requests.")
             else:
                 for _, tk in tickets_df.head(5).iterrows():
                     st.markdown(
                         f'<div class="notif-card notif-{"warning" if tk["status"]=="Pending Review" else "info"}">'
-                        f'<div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:4px;">'
-                        f'<strong>{tk["student_name"]} &bull; {tk["subject_name"]} ({tk["session_type"]})</strong>'
-                        f'<span class="mono" style="color:#38BDF8;">{tk["status"]}</span></div>'
-                        f'<div style="font-size:0.80rem;color:#CBD5E1;">To: {tk["routed_to"]} ({tk["recipient_name"]}) — {tk["reason"]}</div></div>',
+                        f'<div style="display:flex;justify-content:space-between;font-size:0.80rem;margin-bottom:4px;">'
+                        f'<strong>{tk["student_name"]} &middot; {tk["subject_name"]} ({tk["session_type"]})</strong>'
+                        f'<span style="color:#4F46E5;font-weight:600;font-size:0.74rem;">{tk["status"]}</span></div>'
+                        f'<div style="font-size:0.80rem;color:#475569;">Sent to {tk["recipient_name"]} — {tk["reason"]}</div></div>',
                         unsafe_allow_html=True,
                     )
                     if tk["status"] == "Pending Review" and st.session_state.user_role == "Instructor / Mentor":
                         rb1, rb2 = st.columns(2)
                         with rb1:
-                            if st.button("Approve & Recalculate", key=f"appr_{tk['id']}", type="primary", width="stretch"):
-                                resolve_dispute_ticket(int(tk["id"]), True, "Verified by faculty; attendance recalculated.")
-                                st.toast("Approved! Theory/Practical % & Cumulative Grade recalculated.")
+                            if st.button("Approve & Update", key=f"appr_{tk['id']}", type="primary", width="stretch"):
+                                resolve_dispute_ticket(int(tk["id"]), True, "Verified by instructor; attendance recalculated.")
+                                st.toast("Approved and recalculated.")
                                 st.rerun(scope="fragment")
                         with rb2:
-                            if st.button("Reject Flag", key=f"rej_{tk['id']}", width="stretch"):
-                                resolve_dispute_ticket(int(tk["id"]), False, "Unable to verify physical presence.")
-                                st.toast("Dispute rejected.")
+                            if st.button("Decline", key=f"rej_{tk['id']}", width="stretch"):
+                                resolve_dispute_ticket(int(tk["id"]), False, "Unable to verify session attendance.")
+                                st.toast("Request declined.")
                                 st.rerun(scope="fragment")
 
 
 # ==============================================================================
-# MODULE D: PARENT ENGAGEMENT & STUDENT SAFETY CENTER
+# TAB 4: GUARDIAN & STUDENT SAFETY
 # ==============================================================================
 @st.fragment
-def render_parent_safety_center():
+def render_guardian_and_safety():
     cum_df = compute_student_cumulative_summary()
     target_sid = st.session_state.active_student_id
     ward_row = cum_df[cum_df["student_id"] == target_sid].iloc[0] if not cum_df.empty and target_sid in cum_df["student_id"].values else None
@@ -953,123 +949,111 @@ def render_parent_safety_center():
 
     with p_left:
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Parent &amp; Guardian Communication Hub</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Real-time dispatch feed for &lt;75% warnings, daily attendance digests, and unexpected exit safety checks.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-title">Guardian Portal &amp; Alerts</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Automatic attendance summaries, below-75% warnings, and unexpected exit notifications for families.</p>', unsafe_allow_html=True)
 
             if ward_row is not None:
                 st.markdown(
-                    f'<div class="lobby-card">'
+                    f'<div class="room-summary">'
                     f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                    f'<strong>Ward Overview: {ward_row["student_name"]} ({ward_row["student_id"]})</strong>'
-                    f'<span class="lobby-code">Cumulative: {ward_row["cumulative_pct"]}%</span></div>'
-                    f'<div style="font-size:0.82rem;color:#CBD5E1;margin-top:6px;">Theory: <strong>{ward_row["theory_pct"]}%</strong> &bull; Practical: <strong>{ward_row["practical_pct"]}%</strong> &bull; Grade: <strong>{ward_row["internal_grade"]}</strong></div>'
+                    f'<strong style="color:#0F172A;">{ward_row["student_name"]} ({ward_row["student_id"]})</strong>'
+                    f'<span class="room-code">Overall: {ward_row["cumulative_pct"]}%</span></div>'
+                    f'<div style="font-size:0.81rem;color:#475569;margin-top:6px;">Theory: <strong>{ward_row["theory_pct"]}%</strong> &middot; Practical: <strong>{ward_row["practical_pct"]}%</strong> &middot; Grade: <strong>{ward_row["internal_grade"]}</strong></div>'
                     f"</div>",
                     unsafe_allow_html=True,
                 )
 
-            if st.button("Run <75% Dual Warning Audit Now", icon=":material/notifications_active:", width="stretch"):
+            if st.button("Check & Send Below-75% Warnings", icon=":material/notifications_active:", width="stretch"):
                 cnt = dispatch_below_75_warnings()
-                st.toast(f"Dispatched {cnt} new <75% warning(s) to Student & Parent portals." if cnt else "All <75% warnings already dispatched.")
+                st.toast(f"Sent {cnt} new attendance warning(s)." if cnt else "All below-75% warnings are up to date.")
                 st.rerun(scope="fragment")
 
             parent_notifs = get_notifications(recipient_role="Parent" if st.session_state.user_role == "Parent / Guardian" else None)
             if parent_notifs.empty:
-                st.caption("No parent notifications dispatched yet.")
+                st.caption("No guardian alerts sent yet.")
             else:
                 for _, nf in parent_notifs.head(6).iterrows():
                     sev_cls = "critical" if nf["severity"] == "Critical" else ("warning" if nf["severity"] == "Warning" else "info")
-                    ack_txt = "Acknowledged" if nf["acknowledged"] else "Pending Ack"
+                    ack_txt = "Acknowledged" if nf["acknowledged"] else "Unread"
                     st.markdown(
                         f'<div class="notif-card notif-{sev_cls}">'
-                        f'<div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:4px;">'
-                        f'<strong>{nf["title"]}</strong><span class="mono" style="color:#94A3B8;">{nf["created_at"]}</span></div>'
-                        f'<div style="font-size:0.80rem;color:#CBD5E1;">{nf["message"]}</div>'
-                        f'<div style="font-size:0.71rem;color:#38BDF8;margin-top:5px;">To: {nf["recipient_role"]} &bull; Channels: {nf["channels"]} &bull; {ack_txt}</div>'
+                        f'<div style="display:flex;justify-content:space-between;font-size:0.80rem;margin-bottom:4px;">'
+                        f'<strong style="color:#0F172A;">{nf["title"]}</strong><span style="color:#64748B;font-size:0.73rem;">{nf["created_at"]}</span></div>'
+                        f'<div style="font-size:0.80rem;color:#475569;">{nf["message"]}</div>'
+                        f'<div style="font-size:0.72rem;color:#64748B;margin-top:5px;">Recipient: {nf["recipient_role"]} &middot; {nf["channels"]} &middot; <strong>{ack_txt}</strong></div>'
                         f"</div>",
                         unsafe_allow_html=True,
                     )
                     if not nf["acknowledged"]:
-                        if st.button("Mark Acknowledged", key=f"ack_{nf['id']}", width="stretch"):
+                        if st.button("Mark as Read", key=f"ack_{nf['id']}", width="stretch"):
                             acknowledge_notification(int(nf["id"]))
                             st.rerun(scope="fragment")
 
     with p_right:
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Student Safety &amp; Safeguarding Protocols</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Presence verification during scheduled hours, discreet SOS check-in, and zero-image biometric privacy.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-title">Student Safety &amp; Well-Being</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Private safety check-ins during class hours and direct family-to-mentor communication.</p>', unsafe_allow_html=True)
 
-            # Discreet Student Safety Check-In / SOS Trigger
-            st.markdown("**Discreet Student Safety / Well-Being Check-In**")
-            sos_note = st.text_input("Optional Private Message to Mentor / Campus Safety", placeholder="e.g., Feeling unwell in Lab Block B, requesting mentor check-in.")
-            if st.button("Send Private Safety Check-In to Mentor", icon=":material/health_and_safety:", type="primary", width="stretch"):
+            st.markdown("**Private Safety Check-In**")
+            sos_note = st.text_input("Optional note for Mentor", placeholder="e.g., Feeling unwell in Lab Block B, need assistance.")
+            if st.button("Alert Mentor Privately", icon=":material/health_and_safety:", type="primary", width="stretch"):
                 w_name = ward_row["student_name"] if ward_row is not None else "Student"
-                msg = sos_note.strip() or f"{w_name} requested a discreet safety / well-being check-in during scheduled hours."
+                msg = sos_note.strip() or f"{w_name} requested a private well-being check-in during scheduled hours."
                 for r_role in ("Instructor", "Parent"):
                     dispatch_notification(
                         recipient_role=r_role,
                         student_id=target_sid,
                         student_name=w_name,
-                        category="Student Safety SOS",
+                        category="Student Safety",
                         severity="Critical",
-                        title=f"Safety Check-In Alert — {w_name}",
+                        title=f"Safety Check-In — {w_name}",
                         message=msg,
-                        channels="Urgent Mentor Desk • SMS",
+                        channels="Mentor Desk · SMS",
                     )
-                st.success("Private safety alert delivered to Assigned Mentor and Campus Safety Desk.")
+                st.success("Your private safety check-in has been sent to your Mentor.")
                 st.rerun(scope="fragment")
 
             st.divider()
-            st.markdown("**Message Assigned Mentor (Parent Quick-Connect)**")
+            st.markdown("**Message Assigned Mentor**")
             with st.form("parent_mentor_msg", clear_on_submit=True, border=False):
-                pm_txt = st.text_input("Parent Note", placeholder="e.g., Rohan had a doctor appointment this morning.")
-                if st.form_submit_button("Send Note to Mentor", icon=":material/mail:", width="stretch") and pm_txt.strip():
+                pm_txt = st.text_input("Message", placeholder="Share a note regarding absence or well-being...")
+                if st.form_submit_button("Send Message", icon=":material/mail:", width="stretch") and pm_txt.strip():
                     w_name = ward_row["student_name"] if ward_row is not None else "Student"
                     dispatch_notification(
                         recipient_role="Instructor",
                         student_id=target_sid,
                         student_name=w_name,
-                        category="Parent Message",
+                        category="Guardian Note",
                         severity="Info",
-                        title=f"Parent Note regarding {w_name}",
+                        title=f"Note from Guardian ({w_name})",
                         message=pm_txt.strip(),
-                        channels="Parent Portal -> Mentor",
+                        channels="Guardian Portal",
                     )
-                    st.toast("Message delivered to Assigned Mentor.")
+                    st.toast("Note delivered to Mentor.")
                     st.rerun(scope="fragment")
-
-            st.divider()
-            st.markdown(
-                '<div class="audit-panel">'
-                '<div style="font-weight:700;color:#F8FAFC;margin-bottom:4px;">Safeguarding &amp; Privacy Guarantees</div>'
-                '<div><span class="dot-ok">&bull;</span>Mid-session disappearances auto-trigger mentor safety checks.</div>'
-                '<div><span class="dot-ok">&bull;</span>Role-masked portal: parents only view their linked ward.</div>'
-                '<div><span class="dot-ok">&bull;</span>0 raw photos stored; 512-D L2 vectors only.</div>'
-                "</div>",
-                unsafe_allow_html=True,
-            )
 
 
 # ==============================================================================
-# MODULE E: BIOMETRIC ROSTER, AUTO-PDF ARCHIVE & ANALYTICS
+# TAB 5: STUDENT ROSTER & SESSION REPORTS
 # ==============================================================================
 @st.fragment
 def render_roster_and_reports():
-    sub_tab1, sub_tab2 = st.tabs([":material/fingerprint: Biometric Roster & Privacy Vault", ":material/analytics: Auto-PDF Archive & Analytics"])
+    sub_tab1, sub_tab2 = st.tabs([":material/group: Student Roster", ":material/description: Session Reports & Analytics"])
 
     with sub_tab1:
         r_l, r_r = st.columns([1, 1.35], gap="medium")
         with r_l:
             with st.container(border=True):
-                st.markdown('<p class="sec-title">Enroll Student (Zero-Image Vault)</p>', unsafe_allow_html=True)
-                st.markdown('<p class="sec-sub">Extracts a normalized 512-D vector in RAM and permanently discards the photo.</p>', unsafe_allow_html=True)
+                st.markdown('<p class="sec-title">Enroll Student</p>', unsafe_allow_html=True)
+                st.markdown('<p class="sec-sub">Generates an encrypted identity signature on-device and discards the photo immediately.</p>', unsafe_allow_html=True)
                 nid = st.text_input("Student ID", placeholder="S107")
                 nname = st.text_input("Full Name", placeholder="Priya Deshmukh")
-                src_mode = st.radio("Capture Method", ["Upload Portrait", "Live Camera Snapshot"], horizontal=True)
-                img_file = st.file_uploader("Front-Facing Photo", type=["jpg", "jpeg", "png"]) if src_mode == "Upload Portrait" else st.camera_input("Take Snapshot")
+                src_mode = st.radio("Photo Source", ["Upload Photo", "Camera Snapshot"], horizontal=True)
+                img_file = st.file_uploader("Front-facing portrait", type=["jpg", "jpeg", "png"]) if src_mode == "Upload Photo" else st.camera_input("Take Snapshot")
 
-                if st.button("Extract & Save 512-D Vector", icon=":material/person_add:", type="primary", width="stretch"):
+                if st.button("Save Student Profile", icon=":material/person_add:", type="primary", width="stretch"):
                     if not nid.strip() or not nname.strip() or img_file is None:
-                        st.error("Provide Student ID, Full Name, and a facial photo.")
+                        st.error("Enter Student ID, Full Name, and provide a clear photo.")
                     else:
                         arr = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
                         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -1079,16 +1063,16 @@ def render_roster_and_reports():
                             if len(faces) == 1:
                                 emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
                                 save_student(nid.strip(), nname.strip(), emb)
-                                st.success(f"Enrolled {nname.strip()} ({nid.strip()}). Raw Image Permanently Discarded (0 Bytes Saved).")
+                                st.success(f"Enrolled {nname.strip()}. Original photo permanently discarded.")
                                 st.rerun(scope="fragment")
                             else:
-                                st.error("Ensure exactly 1 clear face is visible.")
+                                st.error("Please ensure exactly one clear face is visible.")
 
         with r_r:
             with st.container(border=True):
                 rh1, rh2 = st.columns([1.6, 1], vertical_alignment="center")
                 with rh1:
-                    st.markdown('<p class="sec-title">Enrolled Biometric Directory</p>', unsafe_allow_html=True)
+                    st.markdown('<p class="sec-title">Enrolled Directory</p>', unsafe_allow_html=True)
                 with rh2:
                     if st.button("Load Sample Roster", icon=":material/group_add:", width="stretch"):
                         seed_sample_roster()
@@ -1098,10 +1082,9 @@ def render_roster_and_reports():
                 rdf = pd.DataFrame([
                     {
                         "Student ID": r["student_id"],
-                        "Full Name": r["name"],
-                        "Storage Proof": "512-D L2 Vector (0 Raw Bytes)",
-                        "L2 Norm": round(float(np.linalg.norm(r["embedding"])), 4),
-                        "Enrolled": r["created_at"],
+                        "Name": r["name"],
+                        "Privacy Status": "Encrypted Signature · No Photo",
+                        "Added": r["created_at"],
                     }
                     for r in roster
                 ])
@@ -1109,63 +1092,61 @@ def render_roster_and_reports():
 
                 if roster:
                     i1, i2, i3 = st.columns([2, 1, 1], vertical_alignment="center")
-                    opts = [f"{r['student_id']} — {r['name']}" for r in roster]
+                    opts = [f"{r['name']} ({r['student_id']})" for r in roster]
                     with i1:
-                        picked = st.selectbox("Select Student", opts, label_visibility="collapsed")
-                    tid = picked.split(" — ")[0]
+                        picked = st.selectbox("Manage Student", opts, label_visibility="collapsed")
+                    tid = picked.split("(")[-1].rstrip(")")
                     tobj = next(r for r in roster if r["student_id"] == tid)
                     with i2:
-                        with st.popover("Inspect Vector", icon=":material/fingerprint:", width="stretch"):
+                        with st.popover("Privacy Proof", icon=":material/verified_user:", width="stretch"):
                             st.markdown(f"**{tobj['name']}** (`{tid}`)")
-                            st.caption("Raw Image Stored: 0 Bytes")
-                            vals = ", ".join(f"{v:+.4f}" for v in tobj["embedding"][:10])
-                            st.code(f"[{vals}, ... ] (512-D, L2=1.0000)", language="text")
+                            st.caption("Stored Images: 0 files (0 bytes)")
+                            vals = ", ".join(f"{v:+.4f}" for v in tobj["embedding"][:8])
+                            st.code(f"Signature Preview: [{vals}, ...]", language="text")
                     with i3:
                         if st.button("Remove", icon=":material/delete:", width="stretch"):
                             delete_student(tid)
                             st.rerun(scope="fragment")
 
     with sub_tab2:
-        # Auto-Generated Session PDF Archive
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Auto-Generated Session PDF Archive</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Compiled automatically at the conclusion of every scheduled classroom session.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-title">Automated Session PDF Archive</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Generated automatically whenever a scheduled session concludes.</p>', unsafe_allow_html=True)
             rep_df = get_session_reports()
             if rep_df.empty:
-                st.caption("End a scheduled session in the Live Command Center to auto-generate and archive your first PDF report.")
+                st.caption("Click End & Export PDF in the Live Session tab to archive your first session report.")
             else:
                 for _, rr in rep_df.head(5).iterrows():
                     rc1, rc2 = st.columns([3, 1], vertical_alignment="center")
                     with rc1:
                         st.markdown(
-                            f"**{rr['subject_name']}** (`{rr['session_id']}` • {rr['lobby_code']}) — "
-                            f"Engagement: **{rr['avg_engagement']}%** | Present: **{rr['present_count']}/{rr['total_count']}** | "
-                            f"Proctor Alerts: **{rr['proctor_violations']}** | _{rr['generated_at']}_"
+                            f"**{rr['subject_name']}** ({rr['lobby_code']}) &middot; "
+                            f"Engagement: **{rr['avg_engagement']}%** &middot; Present: **{rr['present_count']}/{rr['total_count']}** &middot; "
+                            f"Focus Alerts: **{rr['proctor_violations']}** &middot; _{rr['generated_at']}_"
                         )
                     with rc2:
                         st.download_button(
                             "Download PDF",
                             data=base64.b64decode(rr["pdf_b64"]),
-                            file_name=f"AttendAI_AutoReport_{rr['session_id']}.pdf",
+                            file_name=f"AttendAI_Session_Report_{rr['session_id']}.pdf",
                             mime="application/pdf",
                             icon=":material/picture_as_pdf:",
                             key=f"dl_rep_{rr['id']}",
                             width="stretch",
                         )
 
-        # Multimodal Analytics Charts
         sessions = get_session_list()
-        sel_sess = st.selectbox("Filter Historical Session", ["ALL"] + sessions, format_func=lambda x: "All Archived Sessions" if x == "ALL" else x)
-        df_att, df_eng, df_sug = get_session_data(sel_sess)
+        sel_sess = st.selectbox("Session History", ["ALL"] + sessions, format_func=lambda x: "All Sessions" if x == "ALL" else x)
+        _, df_eng, _ = get_session_data(sel_sess)
 
         if not df_eng.empty:
             c1, c2 = st.columns([1.5, 1], gap="medium")
             with c1:
                 with st.container(border=True):
-                    st.markdown('<p class="sec-title">Multimodal Engagement Breakdown</p>', unsafe_allow_html=True)
-                    df_p = df_eng.tail(18).rename(columns={"gaze_score": "Visual Gaze", "movement_score": "Posture & Motion", "audio_score": "Vocal Audio"})
+                    st.markdown('<p class="sec-title">Engagement Breakdown</p>', unsafe_allow_html=True)
+                    df_p = df_eng.tail(18).rename(columns={"gaze_score": "Visual Attention", "movement_score": "Posture & Activity", "audio_score": "Class Discussion"})
                     fig_b = go.Figure()
-                    for nm, cl in [("Visual Gaze", "#3B82F6"), ("Posture & Motion", "#38BDF8"), ("Vocal Audio", "#10B981")]:
+                    for nm, cl in [("Visual Attention", "#0F172A"), ("Posture & Activity", "#4F46E5"), ("Class Discussion", "#059669")]:
                         fig_b.add_trace(go.Bar(x=df_p["timestamp"], y=df_p[nm], name=nm, marker_color=cl))
                     fig_b.update_layout(
                         barmode="group",
@@ -1173,24 +1154,24 @@ def render_roster_and_reports():
                         margin=dict(l=8, r=8, t=10, b=8),
                         paper_bgcolor="rgba(0,0,0,0)",
                         plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="#94A3B8", family="Inter", size=11),
+                        font=dict(color="#64748B", family="Inter", size=11),
                         hoverlabel=PLOTLY_HOVER,
-                        yaxis=dict(range=[0, 105], gridcolor="rgba(148,163,184,0.1)"),
+                        yaxis=dict(range=[0, 105], gridcolor="#F1F5F9"),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                     )
                     st.plotly_chart(fig_b, width="stretch", config=PLOTLY_CFG)
 
             with c2:
                 with st.container(border=True):
-                    st.markdown('<p class="sec-title">Composite Modality Balance</p>', unsafe_allow_html=True)
+                    st.markdown('<p class="sec-title">Engagement Mix</p>', unsafe_allow_html=True)
                     comp = round(float(df_eng["total_engagement"].mean()), 1)
                     fig_d = go.Figure(
                         data=[
                             go.Pie(
-                                labels=["Visual Gaze", "Posture & Motion", "Vocal Audio"],
+                                labels=["Visual Attention", "Posture & Activity", "Class Discussion"],
                                 values=[round(float(df_eng["gaze_score"].mean()), 1), round(float(df_eng["movement_score"].mean()), 1), round(float(df_eng["audio_score"].mean()), 1)],
-                                hole=0.66,
-                                marker=dict(colors=["#3B82F6", "#38BDF8", "#10B981"], line=dict(color="#060913", width=2)),
+                                hole=0.68,
+                                marker=dict(colors=["#0F172A", "#4F46E5", "#059669"], line=dict(color="#FFFFFF", width=2)),
                             )
                         ]
                     )
@@ -1198,36 +1179,37 @@ def render_roster_and_reports():
                         height=280,
                         margin=dict(l=12, r=12, t=12, b=28),
                         paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="#94A3B8", family="Inter", size=11),
+                        font=dict(color="#64748B", family="Inter", size=11),
+                        hoverlabel=PLOTLY_HOVER,
                         legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08),
-                        annotations=[dict(text=f"<b>{comp:.1f}%</b><br><span style='font-size:11px;color:#94A3B8;'>Composite</span>", x=0.5, y=0.5, font=dict(size=20, color="#F8FAFC"), showarrow=False)],
+                        annotations=[dict(text=f"<b>{comp:.1f}%</b><br><span style='font-size:11px;color:#64748B;'>Overall</span>", x=0.5, y=0.5, font=dict(size=20, color="#0F172A"), showarrow=False)],
                     )
                     st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CFG)
 
 
-# --- Main Role-Aware Navigation Tabs ---
+# --- Primary Navigation ---
 tabs = st.tabs([
-    ":material/sensors: Live Command & Proctoring",
-    ":material/sports_esports: Classroom Lobbies",
-    ":material/calculate: Attendance Calculator & Disputes",
-    ":material/family_restroom: Parent & Student Safety",
-    ":material/verified_user: Biometric Vault & Auto-PDFs",
+    ":material/sensors: Live Session",
+    ":material/meeting_room: Course Rooms",
+    ":material/calculate: Attendance & Grades",
+    ":material/family_restroom: Guardian & Safety",
+    ":material/folder_shared: Roster & Reports",
 ])
 
 with tabs[0]:
     if st.session_state.stream_playing:
-        render_command_center_live()
+        render_live_session_streaming()
     else:
-        render_command_center_paused()
+        render_live_session_paused()
 
 with tabs[1]:
-    render_lobbies_module()
+    render_course_rooms()
 
 with tabs[2]:
-    render_calculator_and_disputes()
+    render_attendance_and_grades()
 
 with tabs[3]:
-    render_parent_safety_center()
+    render_guardian_and_safety()
 
 with tabs[4]:
     render_roster_and_reports()
