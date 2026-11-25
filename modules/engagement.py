@@ -1,19 +1,22 @@
 import cv2
 import time
 import numpy as np
+from collections import deque
+from modules.database import log_engagement
+
 try:
     import sounddevice as sd
     import webrtcvad
     AUDIO_AVAILABLE = True
 except Exception:
+    sd = None
+    webrtcvad = None
     AUDIO_AVAILABLE = False
-from collections import deque
-from modules.database import log_engagement
 
 
 class MultimodalEngagementAnalyzer:
     def __init__(self, sample_rate: int = 16000):
-        # 1. Visual setup: OpenCV Haar Cascades (100% offline, works across all Python versions)
+        # 1. Visual setup: OpenCV Haar Cascades (100% offline, cross-platform)
         self.face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
         )
@@ -23,9 +26,9 @@ class MultimodalEngagementAnalyzer:
         self.prev_center = None
         self.last_active_time = time.time()
 
-        # 2. Audio setup: WebRTC Voice Activity Detector (100% offline, no speech stored)
+        # 2. Audio setup: Cloud-safe WebRTC VAD (100% offline, zero audio recorded)
         self.sample_rate = sample_rate
-        self.vad = webrtcvad.Vad(2)
+        self.vad = webrtcvad.Vad(2) if AUDIO_AVAILABLE else None
         self.speech_flags = deque(maxlen=150)
         self.audio_running = False
         self.stream = None
@@ -35,11 +38,10 @@ class MultimodalEngagementAnalyzer:
         self.movement_history = deque(maxlen=30)
 
     def start_audio(self):
-        """Starts background microphone monitoring for voice activity."""
-        if self.audio_running:
+        """Starts background microphone monitoring if local audio hardware is available."""
+        if self.audio_running or not AUDIO_AVAILABLE or self.vad is None:
             return
-        if not AUDIO_AVAILABLE:
-            return
+
         self.audio_running = True
         frame_duration_ms = 30
         frame_size = int(self.sample_rate * frame_duration_ms / 1000)
@@ -71,14 +73,19 @@ class MultimodalEngagementAnalyzer:
         """Safely stops microphone stream."""
         self.audio_running = False
         if self.stream is not None:
-            self.stream.stop()
-            self.stream.close()
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
             self.stream = None
 
     def analyze_frame(self, frame: np.ndarray):
         """Computes visual head-pose/inactivity and fuses with live audio activity."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=5, minSize=(60, 60))
+        faces = self.face_cascade.detectMultiScale(
+            gray, scaleFactor=1.15, minNeighbors=5, minSize=(60, 60)
+        )
 
         gaze_score = 0.0
         movement_score = 0.0
@@ -88,9 +95,9 @@ class MultimodalEngagementAnalyzer:
             face_gazes = []
             for (x, y, w, h) in faces:
                 roi_gray = gray[y : y + int(h * 0.6), x : x + w]
-                eyes = self.eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.1, minNeighbors=4)
-
-                # Frontal face detected = 65 base score; both eyes visible looking forward = 95%
+                eyes = self.eye_cascade.detectMultiScale(
+                    roi_gray, scaleFactor=1.1, minNeighbors=4
+                )
                 if len(eyes) >= 2:
                     face_gazes.append(95.0)
                 elif len(eyes) == 1:
@@ -100,7 +107,7 @@ class MultimodalEngagementAnalyzer:
 
             gaze_score = float(np.mean(face_gazes))
 
-            # Movement & inactivity check using primary face center
+            # Movement & inactivity check using primary face centroid
             x, y, w, h = faces[0]
             curr_center = np.array([x + w / 2.0, y + h / 2.0])
             if self.prev_center is not None:
@@ -122,10 +129,10 @@ class MultimodalEngagementAnalyzer:
         self.gaze_history.append(gaze_score)
         self.movement_history.append(movement_score)
 
-        # Audio speech ratio (0-100%)
+        # Audio speech ratio (0-100%) with neutral 50% baseline when visual-only
         audio_score = (float(np.mean(self.speech_flags)) * 100.0) if self.speech_flags else 50.0
 
-        # Multimodal Fusion Formula: 50% Gaze/Pose + 25% Movement/Alertness + 25% Audio Interaction
+        # Multimodal Fusion Formula: 0.50 * Gaze + 0.25 * Movement + 0.25 * Audio
         smooth_gaze = float(np.mean(self.gaze_history))
         smooth_move = float(np.mean(self.movement_history))
         total_engagement = (0.50 * smooth_gaze) + (0.25 * smooth_move) + (0.25 * audio_score)
@@ -147,28 +154,3 @@ class MultimodalEngagementAnalyzer:
             audio=metrics["audio_score"],
             total=metrics["total_engagement"],
         )
-
-
-if __name__ == "__main__":
-    analyzer = MultimodalEngagementAnalyzer()
-    analyzer.start_audio()
-    cap = cv2.VideoCapture(0)
-    print("Testing Multimodal Engagement! Look at screen, turn away, or speak. Press Q to quit.")
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        metrics = analyzer.analyze_frame(frame)
-        text = (
-            f"Engagement: {metrics['total_engagement']}% | "
-            f"Gaze: {metrics['gaze_score']}% | Audio: {metrics['audio_score']}%"
-        )
-        cv2.putText(frame, text, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 220, 0), 2)
-        cv2.imshow("Scenario 2: Multimodal Engagement Test", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    analyzer.stop_audio()
-    cap.release()
-    cv2.destroyAllWindows()

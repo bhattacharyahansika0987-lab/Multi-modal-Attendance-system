@@ -1,481 +1,665 @@
-# =====================================================================
-# AuraClass AI - app.py  (UI/UX upgraded)
-# Stack detected: Python + Streamlit + Plotly + OpenCV + SQLite + Ollama
-# No new installs needed (plotly is already in requirements.txt).
-# Only this file changed. All modules/ files stay exactly as they are.
-# Search for "CUSTOMIZE:" to find every easy-to-tweak value.
-# =====================================================================
 import cv2
 import time
 import tempfile
+import importlib.util
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 from datetime import datetime
-from insightface.app import FaceAnalysis
-from modules.database import init_db, get_connection, load_all_students, save_student
-from modules.attendance import SustainedAttendanceTracker
-from modules.engagement import MultimodalEngagementAnalyzer
-from modules.agent import TeachingAdvisorAgent
 
+from modules.database import (
+    init_db,
+    load_all_students,
+    save_student,
+    delete_student,
+    log_engagement,
+    get_session_list,
+    get_session_data,
+    seed_demo_sessions,
+)
+from modules.attendance import SustainedAttendanceTracker
+from modules.engagement import MultimodalEngagementAnalyzer, AUDIO_AVAILABLE
+from modules.agent import TeachingAdvisorAgent, check_ollama_status
+
+# --- Page Configuration ---
 st.set_page_config(
-    page_title="AuraClass • Multimodal Attendance & Engagement Agent",
-    page_icon="✨",
+    page_title="AttendAI • Multimodal Classroom Intelligence",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 init_db()
 
-# ---------------------------------------------------------------------
-# CUSTOMIZE: themes. Edit any colour here; every component follows.
-# ---------------------------------------------------------------------
-THEMES = {
-    "Pastel Daylight": {
-        "bg": "linear-gradient(135deg, #FFF8F6 0%, #F6F0FF 55%, #FFF0F5 100%)",
-        "card": "rgba(255,255,255,0.70)",
-        "border": "rgba(124,92,191,0.28)",
-        "accent": "#7C5CBF",
-        "accent2": "#EC4899",
-        "text": "#2A2438",
-        "sub": "#5E5473",
-        "shadow": "rgba(124,92,191,0.18)",
-        "sidebar": "rgba(255,255,255,0.62)",
-        "chart": ["#8B5CF6", "#EC4899", "#10B981"],
-    },
-    "Ultramarine & Gold": {
-        "bg": "linear-gradient(135deg, #0B1026 0%, #151E3F 55%, #0D132B 100%)",
-        "card": "rgba(24,34,68,0.62)",
-        "border": "rgba(212,175,55,0.40)",
-        "accent": "#F3C64F",
-        "accent2": "#6C8CFF",
-        "text": "#F8F6F0",
-        "sub": "#C5CAE9",
-        "shadow": "rgba(243,198,79,0.20)",
-        "sidebar": "rgba(15,22,48,0.70)",
-        "chart": ["#F3C64F", "#6C8CFF", "#34D399"],
-    },
-}
-ANIM_SPEED = "0.6s"      # CUSTOMIZE: entrance animation duration
-STAGGER_MS = 90          # CUSTOMIZE: delay between staggered cards (ms)
-HOVER_LIFT_PX = 4        # CUSTOMIZE: how far cards rise on hover
-SCROLL_BAR_HEIGHT = 3    # CUSTOMIZE: scroll-progress bar thickness (px)
 
-# --- Session State Initialization ---
+# --- Cached Resource Loaders (Fast Cloud Boot) ---
+@st.cache_resource(show_spinner="Loading local InsightFace (buffalo_sc) model...")
+def get_face_analyzer():
+    from insightface.app import FaceAnalysis
+    face_app = FaceAnalysis(name="buffalo_sc", providers=["CPUExecutionProvider"])
+    face_app.prepare(ctx_id=0, det_size=(320, 320))
+    return face_app
+
+
+@st.cache_data(ttl=30)
+def get_system_diagnostics():
+    ollama_ok, ollama_label = check_ollama_status()
+    insightface_pkg = importlib.util.find_spec("insightface") is not None
+    return {
+        "ollama_ok": ollama_ok,
+        "ollama_label": ollama_label,
+        "insightface_ok": insightface_pkg,
+        "audio_ok": AUDIO_AVAILABLE,
+    }
+
+
+# --- Session State Defaults ---
 defaults = {
     "running": False,
     "session_id": datetime.now().strftime("SESSION_%Y%m%d_%H%M%S"),
     "engagement_history": [],
     "suggestion_feed": [],
     "attendance_summary": [],
-    "latest_metrics": {"total_engagement": 0.0, "gaze_score": 0.0, "movement_score": 0.0, "audio_score": 0.0, "inactivity_sec": 0.0},
-    "ui_theme": "Pastel Daylight",
+    "latest_metrics": {
+        "total_engagement": 0.0,
+        "gaze_score": 0.0,
+        "movement_score": 0.0,
+        "audio_score": 0.0,
+        "inactivity_sec": 0.0,
+    },
+    "sim_gaze": 86,
+    "sim_move": 84,
+    "sim_audio": 72,
+    "active_preset": "Active Q&A Discussion",
+    "drop_alert": None,
+    "exec_report_md": None,
+    "exec_report_html": None,
+    "exec_report_session": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# --- Sidebar Theme & Controls ---
-with st.sidebar:
-    st.markdown("## ✨ AuraClass AI")
-    st.caption("Offline Multimodal Classroom Intelligence")
-    st.session_state.ui_theme = st.selectbox(
-        "🎨 Interface Theme", list(THEMES.keys()),
-        index=list(THEMES.keys()).index(st.session_state.ui_theme),
-    )
 
-T = THEMES[st.session_state.ui_theme]
-
-# ---------------------------------------------------------------------
-# Global CSS (theme tokens first, static styles second)
-# ---------------------------------------------------------------------
-THEME_VARS = f"""
-:root {{
-  --bg:{T['bg']}; --card:{T['card']}; --border:{T['border']};
-  --accent:{T['accent']}; --accent2:{T['accent2']};
-  --text:{T['text']}; --sub:{T['sub']}; --shadow:{T['shadow']}; --sidebar:{T['sidebar']};
-  --speed:{ANIM_SPEED}; --lift:-{HOVER_LIFT_PX}px; --bar-h:{SCROLL_BAR_HEIGHT}px;
-}}
-"""
-
-STATIC_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
-
-html { scroll-behavior: smooth; }
-.stApp, .stApp button, .stApp input, .stApp textarea {
-  font-family: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
-}
-.stApp { background: var(--bg); background-attachment: fixed; color: var(--text); }
-.stApp h1, .stApp h2, .stApp h3, .stApp label, .stApp p,
-.stApp [data-testid="stMarkdownContainer"], .stApp [data-testid="stMetricValue"],
-.stApp [data-testid="stMetricLabel"] { color: var(--text); }
-.stApp h2, .stApp h3 { letter-spacing: -0.02em; font-weight: 800; }
-.stApp [data-testid="stCaptionContainer"] { color: var(--sub); }
-.block-container { padding-top: 2rem; max-width: 1400px; }
-
-/* Keyframes (one orchestrated page-load moment) */
-@keyframes rise  { from { opacity:0; transform: translateY(18px); } to { opacity:1; transform:none; } }
-@keyframes pulse { 0%,100% { box-shadow:0 0 0 0 rgba(16,185,129,.55);} 50% { box-shadow:0 0 0 10px rgba(16,185,129,0);} }
-@keyframes drift { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
-
-/* Glass sidebar */
-section[data-testid="stSidebar"] {
-  background: var(--sidebar) !important;
-  backdrop-filter: blur(18px) saturate(1.4);
-  -webkit-backdrop-filter: blur(18px) saturate(1.4);
-  border-right: 1px solid var(--border);
-}
-
-/* Hero banner with cursor-following glow */
-.hero-banner {
-  position: relative; overflow: hidden;
-  background: var(--card); border: 1px solid var(--border); border-radius: 22px;
-  padding: 24px 30px; margin-bottom: 20px;
-  display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 12px 36px var(--shadow);
-  animation: rise var(--speed) cubic-bezier(.2,.8,.2,1) both;
-}
-.hero-banner::before {
-  content:""; position:absolute; inset:0; pointer-events:none; opacity:.9;
-  background: radial-gradient(420px circle at var(--mx,80%) var(--my,0%), var(--shadow), transparent 65%);
-  transition: background .2s;
-}
-.hero-banner h2 { margin:0; font-size: clamp(1.25rem, 2.6vw, 1.9rem); }
-.hero-banner p  { margin:6px 0 0; color: var(--sub); }
-
-/* KPI cards: glow follows the cursor, lift on hover, press on click */
-.kpi-card {
-  position: relative; overflow: hidden; text-align: center; cursor: default;
-  background: var(--card); border: 1px solid var(--border); border-radius: 18px;
-  padding: 18px 14px 16px;
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 6px 18px var(--shadow);
-  transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease;
-}
-.kpi-card::before {
-  content:""; position:absolute; inset:0; pointer-events:none; opacity:0; transition: opacity .25s;
-  background: radial-gradient(180px circle at var(--mx,50%) var(--my,50%), var(--shadow), transparent 70%);
-}
-.kpi-card:hover { transform: translateY(var(--lift)); border-color: var(--accent); box-shadow: 0 16px 34px var(--shadow); }
-.kpi-card:hover::before { opacity: 1; }
-.kpi-card:active { transform: translateY(-1px) scale(.985); }
-.kpi-enter { animation: rise var(--speed) cubic-bezier(.2,.8,.2,1) both; }
-.kpi-label { font-size:.8rem; letter-spacing:.04em; color: var(--sub); font-weight:600; }
-.kpi-val   { font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight:800; color: var(--accent); margin:4px 0 10px; line-height:1.1; }
-.kpi-bar   { height:5px; border-radius:99px; background: var(--border); overflow:hidden; }
-.kpi-bar > span { display:block; height:100%; border-radius:99px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
-
-/* AI coach cards */
-.coach-card {
-  background: var(--card); border: 1px solid var(--border); border-left: 5px solid var(--accent);
-  border-radius: 16px; padding: 16px 20px; margin-bottom: 12px;
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  transition: transform .25s ease, box-shadow .25s ease;
-  animation: rise var(--speed) cubic-bezier(.2,.8,.2,1) both;
-}
-.coach-card:hover { transform: translateX(4px); box-shadow: 0 10px 26px var(--shadow); }
-
-/* Status pills */
-.live-pill { background:#10B981; color:#fff; padding:7px 16px; border-radius:999px; font-weight:700; font-size:.82rem; animation: pulse 1.8s infinite; }
-.idle-pill { background: var(--border); color: var(--text); padding:7px 16px; border-radius:999px; font-weight:700; font-size:.82rem; }
-
-/* Buttons: elevation, glow, click feedback */
-.stApp .stButton > button, .stApp .stDownloadButton > button {
-  border-radius: 12px; font-weight: 700; border: 1px solid var(--border);
-  transition: transform .2s ease, box-shadow .2s ease, filter .2s ease;
-}
-.stApp .stButton > button:hover, .stApp .stDownloadButton > button:hover {
-  transform: translateY(-2px); box-shadow: 0 10px 24px var(--shadow); filter: brightness(1.05);
-}
-.stApp .stButton > button:active, .stApp .stDownloadButton > button:active { transform: translateY(0) scale(.97); box-shadow: none; }
-.stApp .stButton > button[kind="primary"] {
-  background: linear-gradient(120deg, var(--accent), var(--accent2), var(--accent));
-  background-size: 200% 200%; color: #fff; border: none; animation: drift 6s ease infinite;
-}
-
-/* Inputs: focus glow */
-.stApp input, .stApp textarea, .stApp [data-baseweb="select"] > div {
-  border-radius: 12px !important; transition: box-shadow .2s ease, border-color .2s ease;
-}
-.stApp input:focus, .stApp textarea:focus, .stApp [data-baseweb="select"] > div:focus-within {
-  box-shadow: 0 0 0 3px var(--shadow) !important; border-color: var(--accent) !important;
-}
-
-/* Tabs: pill style, animated panel switch */
-.stTabs [data-baseweb="tab-list"] { gap: 6px; background: var(--card); border:1px solid var(--border); border-radius: 16px; padding: 6px; overflow-x: auto; }
-.stTabs [data-baseweb="tab"] { border-radius: 12px; padding: 8px 18px; font-weight: 700; transition: background .2s ease, transform .2s ease; }
-.stTabs [data-baseweb="tab"]:hover { background: var(--shadow); transform: translateY(-1px); }
-.stTabs [aria-selected="true"] { background: var(--shadow); color: var(--accent) !important; }
-.stTabs [data-baseweb="tab-highlight"] { background: var(--accent); height: 3px; border-radius: 3px; }
-.stTabs [data-baseweb="tab-panel"] { animation: rise .45s ease both; }
-
-/* Charts, tables, images */
-[data-testid="stPlotlyChart"], [data-testid="stDataFrame"], [data-testid="stImage"] img {
-  border-radius: 16px; transition: box-shadow .25s ease;
-}
-[data-testid="stPlotlyChart"]:hover, [data-testid="stDataFrame"]:hover { box-shadow: 0 12px 30px var(--shadow); }
-
-/* Scroll-progress bar (created by the script below) */
-#aura-progress { position: fixed; top: 0; left: 0; height: var(--bar-h); width: 0; z-index: 999999;
-  background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .1s linear; }
-
-/* Responsive */
-@media (max-width: 768px) {
-  .block-container { padding: 1rem .8rem; }
-  .hero-banner { padding: 18px; border-radius: 18px; }
-  .kpi-card { padding: 14px 10px; }
-}
-/* Accessibility: respect reduced-motion preference */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-}
-"""
-st.markdown(f"<style>{THEME_VARS}{STATIC_CSS}</style>", unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------
-# JS: scroll-progress bar + cursor glow. Runs once per browser tab.
-# Streamlit strips <script> from st.markdown, so we use a 0-height iframe
-# that reaches into the parent page.
-# ---------------------------------------------------------------------
-components.html(
+# --- Cohesive Enterprise Glassmorphic CSS ---
+st.markdown(
     """
-<script>
-(function () {
-  const doc = window.parent.document, win = window.parent;
-  if (win.__auraInit) return;
-  win.__auraInit = true;
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-  // Scroll-progress bar
-  const bar = doc.createElement('div'); bar.id = 'aura-progress'; doc.body.appendChild(bar);
-  const scroller = () => doc.querySelector('[data-testid="stMain"]') || doc.querySelector('section.main') || doc.scrollingElement;
-  const update = () => {
-    const s = scroller(); if (!s) return;
-    const max = s.scrollHeight - s.clientHeight;
-    bar.style.width = (max > 0 ? (s.scrollTop / max) * 100 : 0) + '%';
-  };
-  doc.addEventListener('scroll', update, true);
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
 
-  // Cursor-following glow (event delegation survives Streamlit re-renders)
-  doc.addEventListener('mousemove', (e) => {
-    const el = e.target.closest && e.target.closest('.kpi-card, .hero-banner');
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    el.style.setProperty('--mx', (e.clientX - r.left) + 'px');
-    el.style.setProperty('--my', (e.clientY - r.top) + 'px');
-  }, { passive: true });
-})();
-</script>
-""",
-    height=0,
+    .stApp {
+        background: radial-gradient(circle at 12% 10%, rgba(99, 102, 241, 0.16) 0%, transparent 38%),
+                    radial-gradient(circle at 88% 15%, rgba(56, 189, 248, 0.12) 0%, transparent 40%),
+                    linear-gradient(160deg, #090E1A 0%, #0F172A 55%, #0B1120 100%);
+        color: #F8FAFC;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: rgba(15, 23, 42, 0.86);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border-right: 1px solid rgba(148, 163, 184, 0.16);
+    }
+
+    /* Glass Header Banner */
+    .attend-header {
+        background: rgba(255, 255, 255, 0.045);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        border-radius: 16px;
+        padding: 20px 26px;
+        margin-bottom: 18px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+    .brand-title {
+        font-size: 1.55rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        color: #F8FAFC;
+        margin: 0;
+    }
+    .brand-accent {
+        background: linear-gradient(90deg, #818CF8, #38BDF8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .brand-sub {
+        font-size: 0.88rem;
+        color: #94A3B8;
+        margin: 4px 0 0 0;
+    }
+
+    /* Status Badges */
+    .pill-live {
+        background: rgba(16, 185, 129, 0.16);
+        border: 1px solid rgba(16, 185, 129, 0.45);
+        color: #34D399;
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+    }
+    .pill-sim {
+        background: rgba(56, 189, 248, 0.15);
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        color: #7DD3FC;
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+    }
+    .pill-idle {
+        background: rgba(148, 163, 184, 0.12);
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        color: #CBD5E1;
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+    }
+
+    /* Glass KPI Cards */
+    .glass-kpi {
+        background: rgba(255, 255, 255, 0.04);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 14px;
+        padding: 16px 18px;
+        transition: border-color 0.2s ease;
+    }
+    .glass-kpi:hover {
+        border-color: rgba(129, 140, 248, 0.45);
+    }
+    .kpi-label {
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: #94A3B8;
+        font-weight: 600;
+    }
+    .kpi-value {
+        font-size: 1.95rem;
+        font-weight: 800;
+        color: #F8FAFC;
+        margin: 6px 0 2px 0;
+        line-height: 1.1;
+    }
+    .kpi-tag {
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    /* Glass Panels & Coach Feed */
+    .glass-panel {
+        background: rgba(255, 255, 255, 0.035);
+        backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 14px;
+        padding: 18px;
+        margin-bottom: 14px;
+    }
+    .coach-entry {
+        background: rgba(99, 102, 241, 0.08);
+        border-left: 3px solid #818CF8;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 10px;
+        font-size: 0.9rem;
+        line-height: 1.55;
+        color: #E2E8F0;
+    }
+    .alert-banner {
+        background: rgba(239, 68, 68, 0.14);
+        border: 1px solid rgba(239, 68, 68, 0.45);
+        border-radius: 12px;
+        padding: 12px 16px;
+        color: #FCA5A5;
+        font-size: 0.88rem;
+        font-weight: 600;
+        margin-bottom: 14px;
+    }
+    .audit-card {
+        background: rgba(16, 185, 129, 0.07);
+        border: 1px solid rgba(16, 185, 129, 0.25);
+        border-radius: 12px;
+        padding: 13px 14px;
+        font-size: 0.80rem;
+        line-height: 1.6;
+        color: #CBD5E1;
+    }
+    .audit-dot-ok { color: #34D399; font-weight: 700; }
+    .audit-dot-warn { color: #FBBF24; font-weight: 700; }
+
+    /* Clean Tab Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 6px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 8px 18px;
+        color: #94A3B8;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] {
+        background: rgba(99, 102, 241, 0.22) !important;
+        color: #F8FAFC !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
-# --- Hero Header ---
-status_badge = '<span class="live-pill">● LIVE SESSION ACTIVE</span>' if st.session_state.running else '<span class="idle-pill">○ STANDBY MODE</span>'
+
+# --- Helper Functions ---
+def get_score_color(val: float) -> tuple[str, str]:
+    if val >= 75.0:
+        return "#34D399", "Optimal"
+    if val >= 55.0:
+        return "#FBBF24", "Moderate"
+    return "#F87171", "Attention Low"
+
+
+def check_engagement_drop(history: list, current_score: float):
+    """Detects sharp >15% drops from recent peak or critical <55% engagement."""
+    if len(history) >= 2:
+        recent_peak = max(item["Overall"] for item in history[-5:])
+        drop = round(recent_peak - current_score, 1)
+        if drop >= 15.0:
+            return f"Sharp Engagement Drop Detected: -{drop}% from recent peak ({recent_peak}% → {current_score}%). Consider an interactive check-in."
+    if current_score > 0 and current_score < 55.0:
+        return f"Low Classroom Attention Alert: Engagement is at {current_score}%. Review AI Teaching Coach guidance."
+    return None
+
+
+def apply_simulator_preset(name: str, gaze: int, move: int, audio: int):
+    st.session_state.active_preset = name
+    st.session_state.sim_gaze = gaze
+    st.session_state.sim_move = move
+    st.session_state.sim_audio = audio
+
+
+def push_simulator_step(gaze: float, move: float, audio: float, trigger_ai: bool = False):
+    total = round(0.50 * gaze + 0.25 * move + 0.25 * audio, 1)
+    inactivity = 19.5 if move < 52 else 1.8
+    metrics = {
+        "total_engagement": total,
+        "gaze_score": round(float(gaze), 1),
+        "movement_score": round(float(move), 1),
+        "audio_score": round(float(audio), 1),
+        "inactivity_sec": inactivity,
+    }
+    st.session_state.latest_metrics = metrics
+    st.session_state.engagement_history.append({
+        "Time": datetime.now().strftime("%H:%M:%S"),
+        "Overall": total,
+        "Gaze": metrics["gaze_score"],
+        "Posture": metrics["movement_score"],
+        "Audio": metrics["audio_score"],
+    })
+    log_engagement(
+        st.session_state.session_id,
+        metrics["gaze_score"],
+        metrics["movement_score"],
+        metrics["audio_score"],
+        total,
+    )
+    st.session_state.drop_alert = check_engagement_drop(st.session_state.engagement_history, total)
+
+    if trigger_ai:
+        agent = TeachingAdvisorAgent()
+        roster = load_all_students()
+        tip = agent.generate_suggestion(
+            st.session_state.session_id,
+            metrics,
+            present_count=max(1, len(roster)),
+            total_students=max(1, len(roster)),
+        )
+        st.session_state.suggestion_feed.insert(0, (datetime.now().strftime("%H:%M:%S"), tip))
+
+
+# --- Sidebar: Session Controls & Edge Privacy Audit ---
+diag = get_system_diagnostics()
+enrolled_roster = load_all_students()
+
+with st.sidebar:
+    st.markdown("### 🛡️ AttendAI")
+    st.caption("Privacy-First Multimodal Classroom Engine")
+    st.divider()
+
+    st.markdown("**Session Mode**")
+    input_mode = st.radio(
+        "Input Source",
+        ["Interactive Demo Simulator", "Live Webcam", "Recorded Video (.mp4)"],
+        label_visibility="collapsed",
+    )
+
+    uploaded_video = None
+    if input_mode == "Recorded Video (.mp4)":
+        uploaded_video = st.file_uploader("Upload Classroom Video", type=["mp4", "avi", "mov"])
+
+    presence_req = st.slider("Sustained Presence Threshold (%)", 30, 95, 60, 5)
+    ai_interval = st.slider("Auto Coach Interval (sec)", 10, 60, 20, 5)
+
+    if input_mode != "Interactive Demo Simulator":
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("▶ Start", width="stretch", type="primary"):
+                st.session_state.running = True
+                st.session_state.session_id = datetime.now().strftime("SESSION_%Y%m%d_%H%M%S")
+                st.session_state.engagement_history = []
+                st.session_state.suggestion_feed = []
+                st.session_state.drop_alert = None
+                st.rerun()
+        with b2:
+            if st.button("⏹ Stop", width="stretch"):
+                st.session_state.running = False
+                st.rerun()
+    else:
+        if st.button("🔄 New Simulator Session", width="stretch"):
+            st.session_state.session_id = datetime.now().strftime("SIM_%Y%m%d_%H%M%S")
+            st.session_state.engagement_history = []
+            st.session_state.suggestion_feed = []
+            st.session_state.drop_alert = None
+            st.rerun()
+
+    st.divider()
+
+    # Facility 5: Edge Privacy & System Health Audit Panel
+    st.markdown("**🔒 Edge Privacy & System Health**")
+    ollama_dot = "audit-dot-ok" if diag["ollama_ok"] else "audit-dot-warn"
+    audio_dot = "audit-dot-ok" if diag["audio_ok"] else "audit-dot-warn"
+    audio_txt = "WebRTC VAD Active" if diag["audio_ok"] else "Visual-Only (Cloud Safe)"
+    vision_dot = "audit-dot-ok" if diag["insightface_ok"] else "audit-dot-warn"
+
+    st.markdown(
+        f"""
+        <div class="audit-card">
+            <div><span class="audit-dot-ok">●</span> <strong>100% Edge Processing</strong></div>
+            <div><span class="audit-dot-ok">●</span> <strong>0 Raw Images Stored</strong> (512-D Vectors)</div>
+            <div><span class="audit-dot-ok">●</span> <strong>0 Cloud Data Leaks</strong></div>
+            <hr style="border-color: rgba(255,255,255,0.1); margin: 8px 0;">
+            <div><span class="{vision_dot}">●</span> Face ID: InsightFace <code>buffalo_sc</code></div>
+            <div><span class="audit-dot-ok">●</span> Gaze/Pose: OpenCV Haar Cascades</div>
+            <div><span class="{audio_dot}">●</span> Audio: {audio_txt}</div>
+            <div><span class="{ollama_dot}">●</span> Coach: {diag["ollama_label"]}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Active Session: `{st.session_state.session_id}` • Roster: {len(enrolled_roster)}")
+
+
+# --- Top Brand Header ---
+if st.session_state.running:
+    pill_html = '<span class="pill-live">● LIVE TELEMETRY ACTIVE</span>'
+elif input_mode == "Interactive Demo Simulator":
+    pill_html = '<span class="pill-sim">● INTERACTIVE SIMULATOR READY</span>'
+else:
+    pill_html = '<span class="pill-idle">○ SYSTEM STANDBY</span>'
+
 st.markdown(
     f"""
-    <div class="hero-banner">
+    <div class="attend-header">
         <div>
-            <h2>🎓 Multimodal Attendance & Engagement Agent</h2>
-            <p>Privacy-Preserving Vision • Audio Voice Activity • Local Agentic Reasoning</p>
+            <h1 class="brand-title">Attend<span class="brand-accent">AI</span> &nbsp;Command Suite</h1>
+            <p class="brand-sub">Sustained-Presence Attendance • Multimodal Engagement Fusion • Assistive Pedagogical AI</p>
         </div>
-        <div>{status_badge}</div>
+        <div>{pill_html}</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# --- Sidebar Controls ---
-with st.sidebar:
-    st.divider()
-    st.subheader("🎥 Input & Session Setup")
-    input_mode = st.radio(
-        "Select Mode",
-        ["Live Webcam", "Recorded Video (.mp4)", "Interactive Demo Simulator"],
-    )
 
-    uploaded_video = None
-    sim_gaze, sim_move, sim_audio = 82.0, 85.0, 45.0
-
-    if input_mode == "Recorded Video (.mp4)":
-        uploaded_video = st.file_uploader("Upload Lecture Clip", type=["mp4", "avi", "mov"])
-    elif input_mode == "Interactive Demo Simulator":
-        st.info("Slide values below to test AI Coach responses live without a camera:")
-        sim_gaze = st.slider("Simulated Gaze Focus %", 0, 100, 48)
-        sim_move = st.slider("Simulated Posture Activity %", 0, 100, 55)
-        sim_audio = st.slider("Simulated Vocal Interaction %", 0, 100, 12)
-
-    presence_req = st.slider("Sustained Presence Threshold (%)", 30, 95, 60, 5)
-    ai_interval = st.slider("Auto AI Advice Interval (sec)", 10, 60, 20, 5)
-
-    c_start, c_stop = st.columns(2)
-    with c_start:
-        if st.button("▶ Start", use_container_width=True, type="primary"):
-            st.session_state.running = True
-            st.session_state.session_id = datetime.now().strftime("SESSION_%Y%m%d_%H%M%S")
-            st.session_state.engagement_history = []
-            st.session_state.suggestion_feed = []
-            st.rerun()
-    with c_stop:
-        if st.button("⏹ Stop", use_container_width=True):
-            st.session_state.running = False
-            st.rerun()
-
-    st.divider()
-    enrolled_students = load_all_students()
-    st.metric("Enrolled Roster", f"{len(enrolled_students)} Students")
-
-# --- Main Navigation Tabs ---
-tab_monitor, tab_enroll, tab_reports = st.tabs([
+# --- Main Facility Tabs ---
+tab_live, tab_roster, tab_analytics = st.tabs([
     "📡 Live Command Center",
-    "➕ Quick Student Enrollment",
-    "📊 Analytics & Export",
+    "👤 Roster & Enrollment Manager",
+    "📊 Analytics & Executive Reports",
 ])
 
-# ==========================================
-# TAB 1: LIVE COMMAND CENTER
-# ==========================================
-with tab_monitor:
+
+# ==============================================================================
+# TAB 1: LIVE COMMAND CENTER + INTERACTIVE DEMO SIMULATOR
+# ==============================================================================
+with tab_live:
+    # Sharp Engagement Drop Alert Slot
+    alert_slot = st.empty()
+    if st.session_state.drop_alert:
+        alert_slot.markdown(f'<div class="alert-banner">⚠️ {st.session_state.drop_alert}</div>', unsafe_allow_html=True)
+
+    # Glassmorphic KPI Row
     k1, k2, k3, k4 = st.columns(4)
     kpi_overall = k1.empty()
     kpi_gaze = k2.empty()
     kpi_move = k3.empty()
     kpi_audio = k4.empty()
 
-    def kpi_html(label, value, index, animate):
-        # Entrance animation only when idle: during the live loop cards are
-        # re-drawn every frame and would flicker if they re-animated.
-        cls = "kpi-card kpi-enter" if animate else "kpi-card"
-        delay = f"animation-delay:{index * STAGGER_MS}ms;" if animate else ""
-        pct = max(0, min(100, float(value)))
-        return (
-            f'<div class="{cls}" style="{delay}"><div class="kpi-label">{label}</div>'
-            f'<div class="kpi-val">{value}%</div>'
-            f'<div class="kpi-bar"><span style="width:{pct}%"></span></div></div>'
-        )
+    def render_kpis(m: dict):
+        items = [
+            (kpi_overall, "Overall Engagement", m["total_engagement"]),
+            (kpi_gaze, "Visual Gaze Focus", m["gaze_score"]),
+            (kpi_move, "Posture & Motion", m["movement_score"]),
+            (kpi_audio, "Vocal Interaction", m["audio_score"]),
+        ]
+        for slot, label, val in items:
+            col, tag = get_score_color(val)
+            if val == 0.0:
+                col, tag = "#94A3B8", "Awaiting Stream"
+            slot.markdown(
+                f"""
+                <div class="glass-kpi">
+                    <div class="kpi-label">{label}</div>
+                    <div class="kpi-value">{val:.1f}%</div>
+                    <div class="kpi-tag" style="color:{col};">● {tag}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-    def render_kpis(m, animate=False):
-        kpi_overall.markdown(kpi_html("Overall Engagement", m["total_engagement"], 0, animate), unsafe_allow_html=True)
-        kpi_gaze.markdown(kpi_html("Visual Gaze", m["gaze_score"], 1, animate), unsafe_allow_html=True)
-        kpi_move.markdown(kpi_html("Posture & Motion", m["movement_score"], 2, animate), unsafe_allow_html=True)
-        kpi_audio.markdown(kpi_html("Vocal Interaction", m["audio_score"], 3, animate), unsafe_allow_html=True)
-
-    render_kpis(st.session_state.latest_metrics, animate=not st.session_state.running)
+    render_kpis(st.session_state.latest_metrics)
     st.write("")
 
-    col_left, col_right = st.columns([1.25, 1])
+    col_main, col_side = st.columns([1.3, 1])
 
-    with col_left:
-        st.subheader("👁️ Multimodal Vision & Tracking Stream")
-        video_box = st.empty()
-        if not st.session_state.running:
-            video_box.info("Click **▶ Start** in the left sidebar to launch live face recognition, gaze tracking, and voice activity analysis.")
+    with col_main:
+        if input_mode == "Interactive Demo Simulator":
+            st.markdown("#### 🎛️ Interactive Classroom Scenario Simulator")
+            st.caption("Evaluate AttendAI directly on cloud without a webcam—pick a classroom preset or fine-tune signals below.")
 
-        st.subheader("📋 Sustained-Presence Attendance")
-        att_box = st.empty()
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                if st.button("💬 Active Q&A Discussion", width="stretch"):
+                    apply_simulator_preset("Active Q&A Discussion", 88, 84, 78)
+                    push_simulator_step(88, 84, 78, trigger_ai=True)
+                    st.rerun()
+            with p2:
+                if st.button("📉 Mid-Lecture Attention Dip", width="stretch"):
+                    apply_simulator_preset("Mid-Lecture Attention Dip", 44, 48, 12)
+                    push_simulator_step(44, 48, 12, trigger_ai=True)
+                    st.rerun()
+            with p3:
+                if st.button("📝 Silent Note-Taking", width="stretch"):
+                    apply_simulator_preset("Silent Note-Taking", 74, 79, 18)
+                    push_simulator_step(74, 79, 18, trigger_ai=True)
+                    st.rerun()
 
-    with col_right:
-        head_c1, head_c2 = st.columns([1.6, 1])
-        with head_c1:
-            st.subheader("🤖 AI Teaching Coach")
-        with head_c2:
-            ask_now = st.button("✨ Ask Coach Now", use_container_width=True)
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                g_val = st.slider("Visual Gaze (%)", 0, 100, int(st.session_state.sim_gaze))
+            with s2:
+                m_val = st.slider("Posture & Motion (%)", 0, 100, int(st.session_state.sim_move))
+            with s3:
+                a_val = st.slider("Vocal Interaction (%)", 0, 100, int(st.session_state.sim_audio))
 
-        coach_box = st.empty()
+            st.session_state.sim_gaze = g_val
+            st.session_state.sim_move = m_val
+            st.session_state.sim_audio = a_val
 
-        if ask_now:
-            with st.spinner("Local Ollama agent analyzing classroom state..."):
+            act1, act2 = st.columns(2)
+            with act1:
+                if st.button("➕ Log Telemetry Window", type="primary", width="stretch"):
+                    push_simulator_step(g_val, m_val, a_val, trigger_ai=False)
+                    st.rerun()
+            with act2:
+                if st.button("⚡ Simulate 5-Window Class Arc", width="stretch"):
+                    arc = [(85, 83, 62), (76, 78, 35), (48, 51, 14), (66, 70, 48), (88, 86, 76)]
+                    for idx, (ag, am, aa) in enumerate(arc):
+                        push_simulator_step(ag, am, aa, trigger_ai=(idx in [2, 4]))
+                    st.rerun()
+
+            video_slot = st.empty()
+        else:
+            st.markdown("#### 👁️ Multimodal Vision & Verification Feed")
+            video_slot = st.empty()
+            if not st.session_state.running:
+                video_slot.info("Select **▶ Start** in the sidebar to begin real-time face verification and multimodal tracking.")
+
+        st.markdown("#### 📈 Real-Time Engagement Telemetry")
+        chart_slot = st.empty()
+
+        def render_telemetry_chart():
+            if st.session_state.engagement_history:
+                df_h = pd.DataFrame(st.session_state.engagement_history)
+                fig = go.Figure()
+                traces = [
+                    ("Overall", "#818CF8", 3),
+                    ("Gaze", "#38BDF8", 2),
+                    ("Audio", "#34D399", 2),
+                ]
+                for col_name, color, width in traces:
+                    if col_name in df_h.columns:
+                        fig.add_trace(
+                            go.Scatter(
+                                x=df_h["Time"],
+                                y=df_h[col_name],
+                                mode="lines+markers",
+                                name=col_name,
+                                line=dict(color=color, width=width, shape="spline"),
+                                marker=dict(size=6),
+                            )
+                        )
+                fig.add_hline(
+                    y=60,
+                    line_dash="dash",
+                    line_color="rgba(251, 191, 36, 0.55)",
+                    annotation_text="Attention Threshold (60%)",
+                    annotation_position="bottom right",
+                )
+                fig.update_layout(
+                    height=275,
+                    margin=dict(l=8, r=8, t=12, b=8),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(255,255,255,0.02)",
+                    font=dict(color="#CBD5E1", family="Inter"),
+                    yaxis=dict(range=[0, 105], title="Score (%)", gridcolor="rgba(148,163,184,0.12)"),
+                    xaxis=dict(title="", gridcolor="rgba(148,163,184,0.08)"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                )
+                chart_slot.plotly_chart(fig, width="stretch", key=f"live_chart_{len(df_h)}")
+            else:
+                chart_slot.markdown(
+                    '<div class="glass-panel" style="text-align:center; color:#94A3B8; padding:36px;">'
+                    'Click a classroom preset or <strong>⚡ Simulate 5-Window Class Arc</strong> above to render real-time spline telemetry.'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+
+        render_telemetry_chart()
+
+    with col_side:
+        c_head, c_btn = st.columns([1.45, 1])
+        with c_head:
+            st.markdown("#### 🤖 AI Teaching Coach")
+        with c_btn:
+            ask_coach = st.button("✨ Ask Coach Now", width="stretch", type="primary")
+
+        coach_slot = st.empty()
+
+        if ask_coach:
+            with st.spinner("Synthesizing pedagogical guidance..."):
                 agent = TeachingAdvisorAgent()
                 present_cnt = sum(1 for r in st.session_state.attendance_summary if r["Status"] == "Present")
-                tip = agent.generate_suggestion(
-                    st.session_state.session_id,
-                    st.session_state.latest_metrics,
-                    present_cnt,
-                    max(1, len(enrolled_students)),
-                )
-                st.session_state.suggestion_feed.insert(0, (datetime.now().strftime("%H:%M:%S"), tip))
+                cur_m = st.session_state.latest_metrics
+                if cur_m["total_engagement"] == 0.0 and input_mode == "Interactive Demo Simulator":
+                    push_simulator_step(st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio, trigger_ai=True)
+                else:
+                    tip = agent.generate_suggestion(
+                        st.session_state.session_id,
+                        cur_m,
+                        present_cnt or max(1, len(enrolled_roster)),
+                        max(1, len(enrolled_roster)),
+                    )
+                    st.session_state.suggestion_feed.insert(0, (datetime.now().strftime("%H:%M:%S"), tip))
+            st.rerun()
 
-        def render_coach():
+        def render_coach_feed():
             if not st.session_state.suggestion_feed:
-                coach_box.markdown(
-                    '<div class="coach-card"><b>Ready to Assist:</b> Start a session or click <i>✨ Ask Coach Now</i> to generate offline pedagogical insights.</div>',
+                coach_slot.markdown(
+                    '<div class="coach-entry"><strong>Standby:</strong> Trigger a classroom preset or click <em>✨ Ask Coach Now</em> to generate real-time pedagogical interventions.</div>',
                     unsafe_allow_html=True,
                 )
             else:
-                html_blocks = ""
-                for ts, msg in st.session_state.suggestion_feed[:3]:
-                    formatted_msg = msg.replace("\n", "<br>")
-                    html_blocks += f'<div class="coach-card"><small style="opacity:0.75;">⏱ {ts}</small><div style="margin-top:6px;">{formatted_msg}</div></div>'
-                coach_box.markdown(html_blocks, unsafe_allow_html=True)
+                cards = ""
+                for ts, msg in st.session_state.suggestion_feed[:4]:
+                    formatted = msg.replace("\n", "<br>")
+                    cards += f'<div class="coach-entry"><div style="font-size:0.75rem; color:#94A3B8; margin-bottom:5px;">⏱ {ts} • AttendAI Advisor</div>{formatted}</div>'
+                coach_slot.markdown(cards, unsafe_allow_html=True)
 
-        render_coach()
+        render_coach_feed()
 
-        st.subheader("📈 Real-Time Engagement Telemetry")
-        chart_box = st.empty()
-
-    def render_chart():
-        if st.session_state.engagement_history:
-            df_h = pd.DataFrame(st.session_state.engagement_history)
-            fig = px.line(
-                df_h,
-                x="Time",
-                y=["Overall", "Gaze", "Audio"],
-                markers=True,
-                line_shape="spline",
-                color_discrete_sequence=T["chart"],
-            )
-            fig.update_layout(
-                height=270,
-                margin=dict(l=10, r=10, t=10, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(color=T["text"], family="Manrope, sans-serif"),
-                yaxis=dict(range=[0, 105], title="Score %", gridcolor=T["border"]),
-                xaxis=dict(title="", gridcolor="rgba(0,0,0,0)"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=""),
-                hoverlabel=dict(font_family="Manrope, sans-serif"),
-            )
-            fig.update_traces(line=dict(width=3), marker=dict(size=6))
-            chart_box.plotly_chart(fig, use_container_width=True, key=f"chart_{len(df_h)}")
-
-    render_chart()
-
-    # --- Active Session Processing Loop ---
-    if st.session_state.running:
-        agent = TeachingAdvisorAgent()
-
-        if input_mode == "Interactive Demo Simulator":
-            total_sim = round(0.50 * sim_gaze + 0.25 * sim_move + 0.25 * sim_audio, 1)
-            sim_metrics = {
-                "total_engagement": total_sim,
-                "gaze_score": float(sim_gaze),
-                "movement_score": float(sim_move),
-                "audio_score": float(sim_audio),
-                "inactivity_sec": 18.0 if sim_move < 40 else 1.5,
-            }
-            st.session_state.latest_metrics = sim_metrics
-            render_kpis(sim_metrics)
-            st.session_state.engagement_history.append({
-                "Time": datetime.now().strftime("%H:%M:%S"),
-                "Overall": total_sim,
-                "Gaze": float(sim_gaze),
-                "Audio": float(sim_audio),
-            })
-            render_chart()
-            video_box.success("🎛️ Simulator Active — Adjust sliders on the left and click **✨ Ask Coach Now** to test AI responses!")
-
+        st.markdown("#### 📋 Sustained-Presence Attendance")
+        att_slot = st.empty()
+        if st.session_state.attendance_summary:
+            att_slot.dataframe(pd.DataFrame(st.session_state.attendance_summary), width="stretch", hide_index=True)
+        elif enrolled_roster:
+            preview_df = pd.DataFrame([
+                {"Student ID": r["student_id"], "Name": r["name"], "Presence %": 0.0, "Status": "Waiting"}
+                for r in enrolled_roster
+            ])
+            att_slot.dataframe(preview_df, width="stretch", hide_index=True)
         else:
-            if input_mode == "Recorded Video (.mp4)" and uploaded_video is not None:
-                tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-                tfile.write(uploaded_video.read())
-                cap = cv2.VideoCapture(tfile.name)
-            else:
-                cap = cv2.VideoCapture(0)
+            att_slot.info("Enroll students in the **Roster & Enrollment Manager** tab to track live sustained attendance.")
 
-            tracker = SustainedAttendanceTracker(presence_threshold=presence_req / 100.0)
+    # --- Live Video / Webcam Loop ---
+    if st.session_state.running and input_mode != "Interactive Demo Simulator":
+        if input_mode == "Recorded Video (.mp4)" and uploaded_video is not None:
+            tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            tfile.write(uploaded_video.read())
+            cap = cv2.VideoCapture(tfile.name)
+        else:
+            cap = cv2.VideoCapture(0)
+
+        if not cap.isOpened():
+            st.error("Unable to open video source. On cloud servers without a webcam, switch to **Interactive Demo Simulator** or upload an `.mp4` clip.")
+            st.session_state.running = False
+        else:
+            face_app = get_face_analyzer()
+            tracker = SustainedAttendanceTracker(presence_threshold=presence_req / 100.0, face_app=face_app)
             analyzer = MultimodalEngagementAnalyzer()
+            agent = TeachingAdvisorAgent()
+
             if input_mode == "Live Webcam":
                 analyzer.start_audio()
 
@@ -494,7 +678,7 @@ with tab_monitor:
                     st.session_state.latest_metrics = metrics
 
                     rgb_frame = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-                    video_box.image(rgb_frame, channels="RGB", use_container_width=True)
+                    video_slot.image(rgb_frame, channels="RGB", width="stretch")
                     render_kpis(metrics)
 
                     now = time.time()
@@ -504,23 +688,33 @@ with tab_monitor:
                             "Time": datetime.now().strftime("%H:%M:%S"),
                             "Overall": metrics["total_engagement"],
                             "Gaze": metrics["gaze_score"],
+                            "Posture": metrics["movement_score"],
                             "Audio": metrics["audio_score"],
                         })
-                        render_chart()
+                        alert_msg = check_engagement_drop(st.session_state.engagement_history, metrics["total_engagement"])
+                        st.session_state.drop_alert = alert_msg
+                        if alert_msg:
+                            alert_slot.markdown(f'<div class="alert-banner">⚠️ {alert_msg}</div>', unsafe_allow_html=True)
+                        else:
+                            alert_slot.empty()
+                        render_telemetry_chart()
                         last_log_time = now
 
                     summary = tracker.get_summary()
                     st.session_state.attendance_summary = summary
                     if summary:
-                        att_box.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
+                        att_slot.dataframe(pd.DataFrame(summary), width="stretch", hide_index=True)
 
                     if now - last_ai_time >= ai_interval:
                         present_cnt = sum(1 for r in summary if r["Status"] == "Present")
                         tip = agent.generate_suggestion(
-                            st.session_state.session_id, metrics, present_cnt, len(summary)
+                            st.session_state.session_id,
+                            metrics,
+                            present_cnt,
+                            max(1, len(summary)),
                         )
                         st.session_state.suggestion_feed.insert(0, (datetime.now().strftime("%H:%M:%S"), tip))
-                        render_coach()
+                        render_coach_feed()
                         last_ai_time = now
 
                     time.sleep(0.05)
@@ -528,86 +722,222 @@ with tab_monitor:
                 analyzer.stop_audio()
                 cap.release()
                 st.session_state.attendance_summary = tracker.finalize_session(st.session_state.session_id)
-                st.toast(f"Session {st.session_state.session_id} saved!", icon="✅")
+                st.toast(f"Session {st.session_state.session_id} finalized and archived locally.", icon="✅")
 
-# ==========================================
-# TAB 2: QUICK STUDENT ENROLLMENT
-# ==========================================
-with tab_enroll:
-    st.subheader("➕ Register New Student (Privacy-Preserving)")
-    st.caption("Captures a facial snapshot, extracts a 512-D mathematical embedding locally, and immediately discards the image.")
 
-    en_c1, en_c2 = st.columns([1, 1.2])
-    with en_c1:
-        new_id = st.text_input("Student ID", placeholder="e.g., S102")
-        new_name = st.text_input("Full Name", placeholder="e.g., Aarav Sharma")
-        cam_photo = st.camera_input("Take Student Snapshot")
+# ==============================================================================
+# TAB 2: PRIVACY-PRESERVING ROSTER & ENROLLMENT MANAGER
+# ==============================================================================
+with tab_roster:
+    st.markdown("#### 👤 Student Enrollment & Vector Roster")
+    st.caption("Privacy Guarantee: Raw photos are processed transiently in RAM to compute a normalized 512-D mathematical vector, then permanently discarded.")
 
-        if st.button("💾 Save Student Embedding", type="primary"):
-            if not new_id or not new_name or cam_photo is None:
-                st.error("Please enter both ID and Name, and take a camera photo.")
-            else:
-                file_bytes = np.asarray(bytearray(cam_photo.read()), dtype=np.uint8)
-                img = cv2.imdecode(file_bytes, 1)
-                face_app = FaceAnalysis(name="buffalo_sc", providers=["CPUExecutionProvider"])
-                face_app.prepare(ctx_id=0, det_size=(320, 320))
-                faces = face_app.get(img)
-                if len(faces) == 1:
-                    emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
-                    save_student(new_id.strip(), new_name.strip(), emb)
-                    st.success(f"Enrolled **{new_name}** ({new_id})! Raw image discarded.")
-                    st.balloons()
-                elif len(faces) == 0:
-                    st.error("No face detected. Ensure good lighting and try again.")
-                else:
-                    st.error("Multiple faces detected. Only one person should be in frame.")
+    r_col1, r_col2 = st.columns([1, 1.25])
 
-    with en_c2:
-        st.markdown("**Currently Enrolled Students**")
-        roster = load_all_students()
-        if roster:
-            st.dataframe(
-                pd.DataFrame([{"Student ID": r["student_id"], "Name": r["name"], "Embedding Dim": "512-D Vector"} for r in roster]),
-                use_container_width=True,
-                hide_index=True,
-            )
+    with r_col1:
+        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
+        st.markdown("**Enroll New Student**")
+        new_id = st.text_input("Student ID", placeholder="e.g., S106")
+        new_name = st.text_input("Full Name", placeholder="e.g., Priya Deshmukh")
+        enroll_method = st.radio("Capture Method", ["Upload Portrait Image", "Live Camera Snapshot"], horizontal=True)
+
+        img_source = None
+        if enroll_method == "Upload Portrait Image":
+            img_source = st.file_uploader("Select Clear Front-Facing Photo", type=["jpg", "jpeg", "png"])
         else:
-            st.info("No students enrolled yet.")
+            img_source = st.camera_input("Capture Student Snapshot")
 
-# ==========================================
-# TAB 3: ANALYTICS & EXPORT
-# ==========================================
-with tab_reports:
-    st.subheader("📊 Historical Session Analytics")
-    conn = get_connection()
-    df_att = pd.read_sql_query("SELECT * FROM attendance ORDER BY id DESC", conn)
-    df_eng = pd.read_sql_query("SELECT * FROM engagement_logs ORDER BY id DESC", conn)
-    df_sug = pd.read_sql_query("SELECT * FROM agent_suggestions ORDER BY id DESC", conn)
-    conn.close()
+        if st.button("💾 Extract & Save 512-D Embedding", type="primary", width="stretch"):
+            if not new_id.strip() or not new_name.strip() or img_source is None:
+                st.error("Provide Student ID, Full Name, and a facial photo.")
+            else:
+                file_bytes = np.asarray(bytearray(img_source.read()), dtype=np.uint8)
+                img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                if img is None:
+                    st.error("Could not decode image. Please upload a valid JPG or PNG.")
+                else:
+                    face_app = get_face_analyzer()
+                    faces = face_app.get(img)
+                    if len(faces) == 1:
+                        emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
+                        save_student(new_id.strip(), new_name.strip(), emb)
+                        st.success(f"Enrolled **{new_name.strip()}** (`{new_id.strip()}`). 512-D vector saved; raw image discarded.")
+                        st.rerun()
+                    elif len(faces) == 0:
+                        st.error("No face detected. Ensure balanced lighting and a clear frontal view.")
+                    else:
+                        st.error("Multiple faces detected. Ensure only the enrolling student is visible.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    if not df_eng.empty:
-        fig_bar = px.bar(
-            df_eng.head(20),
-            x="timestamp",
-            y=["gaze_score", "movement_score", "audio_score"],
-            barmode="group",
-            title="Recent Multimodal Breakdown (Gaze vs. Movement vs. Audio)",
-            color_discrete_sequence=T["chart"],  # CUSTOMIZE: bar colours follow the theme
-        )
-        fig_bar.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color=T["text"], family="Manrope, sans-serif"),
-            yaxis=dict(gridcolor=T["border"]), legend_title_text="",
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+    with r_col2:
+        st.markdown("**Enrolled Student Directory**")
+        current_roster = load_all_students()
+        if current_roster:
+            roster_df = pd.DataFrame([
+                {
+                    "Student ID": r["student_id"],
+                    "Full Name": r["name"],
+                    "Biometric Storage": "512-D L2-Normalized Vector",
+                    "Enrolled At": r["created_at"],
+                }
+                for r in current_roster
+            ])
+            st.dataframe(roster_df, width="stretch", hide_index=True)
 
-    r1, r2 = st.columns(2)
-    with r1:
-        st.markdown("**Timestamped Attendance Logs**")
-        st.dataframe(df_att, use_container_width=True, hide_index=True)
-        if not df_att.empty:
-            st.download_button("⬇ Export Attendance CSV", df_att.to_csv(index=False).encode("utf-8"), "attendance.csv", "text/csv")
+            st.markdown("---")
+            st.markdown("**Manage Roster Records**")
+            del_col1, del_col2 = st.columns([2, 1])
+            with del_col1:
+                remove_target = st.selectbox(
+                    "Select student to remove",
+                    options=[f"{r['student_id']} — {r['name']}" for r in current_roster],
+                    label_visibility="collapsed",
+                )
+            with del_col2:
+                if st.button("🗑️ Remove Record", width="stretch"):
+                    target_id = remove_target.split(" — ")[0]
+                    delete_student(target_id)
+                    st.toast(f"Removed {target_id} from local database.", icon="🗑️")
+                    st.rerun()
+        else:
+            st.info("No students enrolled yet. Use the form on the left to add your first student embedding.")
 
-    with r2:
-        st.markdown("**AI Coach Suggestion History**")
-        st.dataframe(df_sug, use_container_width=True, hide_index=True)
+
+# ==============================================================================
+# TAB 3: ANALYTICS & AUTOMATED EXECUTIVE REPORT BUILDER
+# ==============================================================================
+with tab_analytics:
+    top_a1, top_a2 = st.columns([1.8, 1])
+    with top_a1:
+        st.markdown("#### 📊 Multi-Session Analytics & Executive Reports")
+    with top_a2:
+        if st.button("🌱 Seed Sample Classroom Data", width="stretch"):
+            seeded = seed_demo_sessions()
+            if seeded:
+                st.toast("Sample classroom session seeded!", icon="✅")
+                st.rerun()
+            else:
+                st.info("Historical records already exist in classroom.db.")
+
+    sessions = get_session_list()
+    selected_session = st.selectbox(
+        "Filter by Session",
+        options=["ALL"] + sessions,
+        format_func=lambda x: "All Archived Sessions" if x == "ALL" else x,
+    )
+
+    df_att, df_eng, df_sug = get_session_data(selected_session)
+
+    if df_eng.empty and df_att.empty:
+        st.info("No archived session telemetry found yet. Click **🌱 Seed Sample Classroom Data** above or run the **Interactive Demo Simulator** to populate analytics.")
+    else:
+        # Multimodal Breakdown + Modality Contribution Charts
+        ch1, ch2 = st.columns([1.55, 1])
+        with ch1:
+            if not df_eng.empty:
+                fig_bar = px.bar(
+                    df_eng.tail(20),
+                    x="timestamp",
+                    y=["gaze_score", "movement_score", "audio_score"],
+                    barmode="group",
+                    title="Multimodal Engagement Breakdown (Gaze • Posture • Audio)",
+                    color_discrete_sequence=["#818CF8", "#38BDF8", "#34D399"],
+                )
+                fig_bar.update_layout(
+                    height=320,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(255,255,255,0.02)",
+                    font=dict(color="#CBD5E1", family="Inter"),
+                    yaxis=dict(range=[0, 105], title="Score (%)", gridcolor="rgba(148,163,184,0.12)"),
+                    xaxis=dict(title=""),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=""),
+                )
+                st.plotly_chart(fig_bar, width="stretch")
+
+        with ch2:
+            if not df_eng.empty:
+                avg_vals = [
+                    round(float(df_eng["gaze_score"].mean()), 1),
+                    round(float(df_eng["movement_score"].mean()), 1),
+                    round(float(df_eng["audio_score"].mean()), 1),
+                ]
+                fig_donut = go.Figure(
+                    data=[
+                        go.Pie(
+                            labels=["Visual Gaze (50% wt)", "Posture/Motion (25% wt)", "Vocal Audio (25% wt)"],
+                            values=avg_vals,
+                            hole=0.58,
+                            marker=dict(colors=["#818CF8", "#38BDF8", "#34D399"]),
+                        )
+                    ]
+                )
+                fig_donut.update_layout(
+                    title="Mean Modality Balance",
+                    height=320,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#CBD5E1", family="Inter"),
+                    legend=dict(orientation="h", y=-0.12),
+                )
+                st.plotly_chart(fig_donut, width="stretch")
+
+        # Executive Report Builder
+        st.markdown("---")
+        rep_h1, rep_h2 = st.columns([1.6, 1])
+        with rep_h1:
+            st.markdown("#### 📝 Automated Executive Session Report")
+            st.caption("Synthesizes verified attendance, engagement peaks/dips, and pedagogical interventions into downloadable formats.")
+        with rep_h2:
+            if st.button("✨ Generate Executive Session Report", type="primary", width="stretch"):
+                with st.spinner("Compiling executive report..."):
+                    agent = TeachingAdvisorAgent()
+                    md_out, html_out = agent.generate_executive_report(selected_session, df_att, df_eng, df_sug)
+                    st.session_state.exec_report_md = md_out
+                    st.session_state.exec_report_html = html_out
+                    st.session_state.exec_report_session = selected_session
+
+        if st.session_state.exec_report_md:
+            dl1, dl2, _ = st.columns([1, 1, 1.5])
+            safe_name = str(st.session_state.exec_report_session).replace(" ", "_")
+            with dl1:
+                st.download_button(
+                    "⬇ Download Markdown (.md)",
+                    st.session_state.exec_report_md.encode("utf-8"),
+                    file_name=f"AttendAI_Report_{safe_name}.md",
+                    mime="text/markdown",
+                    width="stretch",
+                )
+            with dl2:
+                st.download_button(
+                    "⬇ Download Formatted HTML (.html)",
+                    st.session_state.exec_report_html.encode("utf-8"),
+                    file_name=f"AttendAI_Report_{safe_name}.html",
+                    mime="text/html",
+                    width="stretch",
+                )
+            with st.expander("Preview Executive Report", expanded=True):
+                st.markdown(st.session_state.exec_report_md)
+
+        # Raw Tables & CSV Exports
+        st.markdown("---")
+        t1, t2 = st.columns(2)
+        with t1:
+            st.markdown("**Sustained-Presence Attendance Logs**")
+            st.dataframe(df_att, width="stretch", hide_index=True)
+            if not df_att.empty:
+                st.download_button(
+                    "⬇ Export Attendance CSV",
+                    df_att.to_csv(index=False).encode("utf-8"),
+                    "attendai_attendance.csv",
+                    "text/csv",
+                )
+
+        with t2:
+            st.markdown("**AI Teaching Coach History**")
+            st.dataframe(df_sug, width="stretch", hide_index=True)
+            if not df_eng.empty:
+                st.download_button(
+                    "⬇ Export Engagement Telemetry CSV",
+                    df_eng.to_csv(index=False).encode("utf-8"),
+                    "attendai_engagement.csv",
+                    "text/csv",
+                )
