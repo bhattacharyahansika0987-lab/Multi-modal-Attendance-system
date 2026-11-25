@@ -103,6 +103,28 @@ def load_all_students():
     ]
 
 
+def seed_sample_roster() -> int:
+    """Seeds 5 realistic students with deterministic L2-normalized 512-D embeddings."""
+    init_db()
+    sample_students = [
+        ("S101", "Hansika Bhattacharya", 101),
+        ("S102", "Aarav Sharma", 102),
+        ("S103", "Meera Nair", 103),
+        ("S104", "Rohan Verma", 104),
+        ("S105", "Ananya Gupta", 105),
+    ]
+    existing_ids = {s["student_id"] for s in load_all_students()}
+    added = 0
+    for sid, name, seed_val in sample_students:
+        if sid not in existing_ids:
+            rng = np.random.default_rng(seed_val)
+            vec = rng.standard_normal(512).astype(np.float32)
+            vec = vec / np.linalg.norm(vec)
+            save_student(sid, name, vec)
+            added += 1
+    return added
+
+
 def log_attendance(session_id: str, student_id: str, name: str, first_seen: str, last_seen: str, ratio: float, status: str):
     conn = get_connection()
     cur = conn.cursor()
@@ -185,7 +207,6 @@ def seed_demo_sessions():
     demo_session = "DEMO_ECE301_LECTURE"
     base_time = datetime.now() - timedelta(minutes=35)
 
-    # Seed realistic attendance records
     sample_att = [
         (demo_session, "S101", "Hansika Bhattacharya", "10:00:12", "10:44:50", 96.4, "Present"),
         (demo_session, "S102", "Aarav Sharma", "10:01:05", "10:44:42", 91.2, "Present"),
@@ -199,7 +220,6 @@ def seed_demo_sessions():
         sample_att,
     )
 
-    # Seed realistic engagement arc (Strong start -> Mid-lecture dip -> Interactive Q&A recovery)
     eng_curve = [
         (86.0, 84.0, 62.0),
         (84.0, 82.0, 58.0),
@@ -226,15 +246,15 @@ def seed_demo_sessions():
             demo_session,
             (base_time + timedelta(minutes=15)).strftime("%H:%M:%S"),
             40.8,
-            "• Attention and vocal interaction dropped sharply—pause the derivation for a 60-second concept check poll.\n"
-            "• Ask an open-ended question linking the current circuit model to a practical lab example.",
+            "Attention and vocal interaction dropped sharply—pause the derivation for a 60-second concept check poll.\n"
+            "Ask an open-ended question linking the current circuit model to a practical lab example.",
         ),
         (
             demo_session,
             (base_time + timedelta(minutes=24)).strftime("%H:%M:%S"),
             87.0,
-            "• High visual focus and active Q&A detected—allow 2 additional minutes for peer discussion before moving slides.\n"
-            "• Summarize the key student questions on the board to consolidate understanding.",
+            "High visual focus and active Q&A detected—allow 2 additional minutes for peer discussion before advancing.\n"
+            "Summarize key student questions on the board to consolidate understanding.",
         ),
     ]
     cur.executemany(
@@ -246,8 +266,3 @@ def seed_demo_sessions():
     conn.commit()
     conn.close()
     return True
-
-
-if __name__ == "__main__":
-    init_db()
-    print("AttendAI database initialized successfully at data/classroom.db!")
