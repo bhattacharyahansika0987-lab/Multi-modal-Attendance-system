@@ -10,17 +10,17 @@ SVG_ICONS = {
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     h = hex_color.lstrip("#")
     if len(h) != 6:
-        return f"rgba(220, 38, 38, {alpha})"
+        return f"rgba(200, 30, 30, {alpha})"
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return f"rgba({r}, {g}, {b}, {alpha})"
 
 
-def get_app_css(accent_color: str = "#DC2626") -> str:
+def get_app_css(accent_color: str = "#C81E1E") -> str:
     """
     Strict 3-Color Light Editorial Theme:
-      1. Pure White (#FFFFFF) canvas & surfaces
+      1. Pure White (#FFFFFF) canvas & cards
       2. Black Ink (#000000) text, crisp highlights, primary buttons & borders
-      3. User-Selectable Accent / Flag Color (accent_color) for important flags & alerts
+      3. User-Selectable Accent / Flag Color (accent_color) for warnings & important flags
     """
     flag_soft = _hex_to_rgba(accent_color, 0.08)
     flag_border = _hex_to_rgba(accent_color, 0.45)
@@ -33,8 +33,9 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
         --white: #FFFFFF;
         --ink: #000000;
         --ink-soft: #3F3F46;
+        --placeholder: #52525B;
         --line-light: #E4E4E7;
-        --line-ink: #000000;
+        --subtle-bg: #F4F4F5;
         --flag: {accent_color};
         --flag-soft: {flag_soft};
         --flag-border: {flag_border};
@@ -51,7 +52,7 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
         font-variant-numeric: tabular-nums;
     }}
 
-    /* Clean Light Header (Keeps Sidebar Toggle Arrow Clickable) */
+    /* Clean Light Header (Keeps Sidebar Reopen Arrow Visible & Clickable) */
     header[data-testid="stHeader"] {{
         background-color: var(--white) !important;
         border-bottom: 1px solid var(--line-light);
@@ -78,7 +79,7 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
         max-width: 1420px;
     }}
 
-    /* Pure White Sidebar with Black Ink Border */
+    /* Pure White Sidebar with Black Ink Divider */
     section[data-testid="stSidebar"] {{
         background-color: var(--white) !important;
         border-right: 1.5px solid var(--ink) !important;
@@ -98,7 +99,7 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
         color: var(--ink) !important;
     }}
 
-    /* Force Light-Mode Inputs, Dropdowns, Textareas & Number Inputs */
+    /* Light-Mode Inputs, Dropdowns & Legible 'Example: ...' Placeholders */
     div[data-baseweb="input"] > div,
     div[data-baseweb="select"] > div,
     textarea,
@@ -118,7 +119,7 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
     }}
     input::placeholder,
     textarea::placeholder {{
-        color: #71717A !important;
+        color: var(--placeholder) !important;
         opacity: 1 !important;
     }}
     div[data-baseweb="select"] svg {{
@@ -142,10 +143,10 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
         color: var(--ink) !important;
     }}
     ul[data-baseweb="menu"] li:hover {{
-        background-color: #F4F4F5 !important;
+        background-color: var(--subtle-bg) !important;
     }}
 
-    /* Popover Triggers & Bodies (Pure White + Black Ink) */
+    /* Popover Buttons & Popover Bodies */
     [data-testid="stPopover"] button,
     [data-testid="stPopoverButton"] {{
         background-color: var(--white) !important;
@@ -239,8 +240,13 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
         border: 1.5px dashed var(--ink) !important;
         border-radius: 8px !important;
     }}
+    [data-testid="stDataFrame"] {{
+        border: 1px solid var(--line-light) !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
+    }}
 
-    /* Navigation Tabs (Black Ink Active Pill on Pure White) */
+    /* Navigation Tabs */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 6px !important;
         background-color: var(--white) !important;
@@ -262,7 +268,7 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
         font-size: 0.85rem !important;
     }}
     .stTabs button[data-baseweb="tab"]:hover {{
-        background-color: #F4F4F5 !important;
+        background-color: var(--subtle-bg) !important;
     }}
     .stTabs button[data-baseweb="tab"][aria-selected="true"] {{
         background-color: var(--ink) !important;
@@ -361,7 +367,7 @@ def get_app_css(accent_color: str = "#DC2626") -> str:
     }}
     .kpi-sub {{ font-size: 0.74rem; color: var(--ink-soft); margin-top: 4px; font-weight: 500; }}
 
-    /* Flag / Important Alert Banner (Uses User's 3rd Color) */
+    /* Flag / Important Alert Banner */
     .flag-banner {{
         display: flex; align-items: center; gap: 10px;
         background-color: var(--flag-soft);

@@ -56,7 +56,7 @@ from modules.styles import (
     render_auto_pdf_download_script,
 )
 
-# --- Page Config (Strict Light Mode) ---
+# --- Page Config ---
 st.set_page_config(
     page_title="AttendAI — Classroom Workspace",
     page_icon=":material/verified_user:",
@@ -66,7 +66,7 @@ st.set_page_config(
 
 init_db()
 
-# Exact 6 Lecture Duration Options requested (45 min to 2 hrs)
+# Exact 6 Lecture Duration Options (45 min to 2 hrs)
 DURATION_OPTIONS = {
     "45 minutes": 45,
     "1 hour": 60,
@@ -76,24 +76,23 @@ DURATION_OPTIONS = {
     "2 hours": 120,
 }
 
+# 5 WCAG AA Accessible Flag / Highlight Presets
 ACCENT_PRESETS = {
-    "Crimson Red": "#DC2626",
-    "Cobalt Blue": "#2563EB",
-    "Forest Green": "#059669",
-    "Burnt Amber": "#D97706",
-    "Deep Plum": "#7C3AED",
+    "Crimson Flag": "#C81E1E",
+    "Cobalt Royal": "#1D4ED8",
+    "Forest Emerald": "#047857",
+    "Burnt Amber": "#B45309",
+    "Deep Plum": "#6D28D9",
 }
 
-# --- Session State (Clean Blank Defaults — Zero Predefined Data) ---
+# --- Session State (Zero Predefined Demo Data) ---
 defaults = {
     "org_name": "Campus Workspace",
-    "default_mentor": "",
-    "accent_color": "#DC2626",
+    "accent_color": "#C81E1E",
     "user_role": "Instructor / Mentor",
     "active_lobby": None,
     "active_student_id": None,
     "session_subject": "",
-    "session_host": "",
     "session_id": datetime.now().strftime("SESS_%Y%m%d_%H%M%S"),
     "class_duration_label": "45 minutes",
     "session_remaining_sec": 45 * 60,
@@ -129,7 +128,6 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# Inject 3-Color Light Theme CSS (White + Black Ink + User's Flag Color)
 ACCENT = st.session_state.accent_color
 st.markdown(get_app_css(ACCENT), unsafe_allow_html=True)
 
@@ -155,14 +153,11 @@ def get_grade_slabs() -> dict:
 
 
 def sync_live_seats():
-    """Keeps live classroom tracking cards synced strictly to the user's enrolled roster."""
     roster = load_all_students()
     valid_ids = {s["student_id"] for s in roster}
-    # Remove deleted students
     for sid in list(st.session_state.live_seats.keys()):
         if sid not in valid_ids:
             del st.session_state.live_seats[sid]
-    # Add newly enrolled students
     for s in roster:
         sid = s["student_id"]
         if sid not in st.session_state.live_seats:
@@ -403,7 +398,7 @@ lobbies = get_lobbies()
 all_students = load_all_students()
 active_room = get_active_room()
 
-# --- Sidebar: Workspace Role, Room Selector, Class Duration & Collapsible Controls ---
+# --- Sidebar ---
 with st.sidebar:
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">'
@@ -457,9 +452,9 @@ with st.sidebar:
 
     st.divider()
 
-    # Collapsible Manual Signal & Testing Drawer
+    # Collapsible Live Signal Controls Drawer
     with st.expander("Live Signal Controls", expanded=False):
-        st.caption("Manually adjust classroom signals to record an engagement snapshot.")
+        st.caption("Adjust classroom signals to record an engagement snapshot.")
         g_val = st.slider("Visual Attention (%)", 0, 100, int(st.session_state.sim_gaze))
         m_val = st.slider("Posture & Activity (%)", 0, 100, int(st.session_state.sim_move))
         a_val = st.slider("Class Discussion (%)", 0, 100, int(st.session_state.sim_audio))
@@ -482,13 +477,13 @@ with st.sidebar:
     chosen_color = st.color_picker(
         "Pick Flag Color",
         value=st.session_state.accent_color,
-        help="Controls the 3rd color used for warnings, alerts, and important highlights.",
+        help="Choose the 3rd color used for warnings, flags, and highlights.",
     )
     if chosen_color != st.session_state.accent_color:
         st.session_state.accent_color = chosen_color
         st.rerun()
 
-# Trigger Auto-PDF download if session ended
+# Trigger Auto-PDF download when session completes
 if st.session_state.auto_pdf_payload:
     fname, b64_data = st.session_state.auto_pdf_payload
     components.html(render_auto_pdf_download_script(fname, b64_data), height=0)
@@ -518,7 +513,6 @@ def _render_live_session():
     if st.session_state.drop_alert:
         st.markdown(f'<div class="flag-banner">{SVG_ICONS["flag"]}<span>{st.session_state.drop_alert}</span></div>', unsafe_allow_html=True)
 
-    # Focused Session Timer Card
     with st.container(border=True):
         c1, c2, c3, c4, c5 = st.columns([1.85, 0.95, 0.85, 0.7, 1.25], vertical_alignment="center")
         mins, secs = divmod(int(st.session_state.session_remaining_sec), 60)
@@ -526,7 +520,7 @@ def _render_live_session():
         host_sub = (
             f"{active_room['active_host']} · {active_room['name']}"
             if active_room
-            else "Create a Course Room or enter a lecture title below to begin."
+            else "Create a room in Course Rooms to attach faculty and assignments."
         )
         with c1:
             st.markdown(f'<div class="sec-title" style="font-size:1.05rem;">{subj_title}</div>', unsafe_allow_html=True)
@@ -555,12 +549,11 @@ def _render_live_session():
                 finalize_and_auto_generate_pdf()
                 st.rerun()
 
-    # Four Engagement Metric Cards (Pure White + Black Ink + Flag Color when Low)
     m = st.session_state.latest_metrics
     has_data = len(st.session_state.engagement_history) > 0
     k1, k2, k3, k4 = st.columns(4)
     specs = [
-        ("Overall Engagement", m["total_engagement"], f"Weighted ({st.session_state.w_gaze}/{st.session_state.w_move}/{st.session_state.w_audio})"),
+        ("Overall Engagement", m["total_engagement"], f"Weights: {st.session_state.w_gaze}/{st.session_state.w_move}/{st.session_state.w_audio}"),
         ("Visual Attention", m["gaze_score"], "Screen & board focus"),
         ("Posture & Activity", m["movement_score"], "Active classroom alertness"),
         ("Class Discussion", m["audio_score"], "Q&A & vocal interaction"),
@@ -579,13 +572,13 @@ def _render_live_session():
     with col_l:
         with st.container(border=True):
             st.markdown('<p class="sec-title">Engagement Timeline</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Open <strong>Live Signal Controls</strong> in the left sidebar to record metrics or click <strong>Start Class</strong> above.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Open <strong>Live Signal Controls</strong> in the sidebar to record metrics or click <strong>Start Class</strong> above.</p>', unsafe_allow_html=True)
             if st.session_state.engagement_history:
                 st.plotly_chart(build_trend_chart(st.session_state.engagement_history), width="stretch", config=PLOTLY_CFG, theme=None)
             else:
                 st.markdown(
                     '<div class="empty-box"><h4>No Session Telemetry Yet</h4>'
-                    '<p>Record a snapshot from <strong>Live Signal Controls</strong> in the sidebar to plot real-time classroom engagement.</p></div>',
+                    '<p>Open <strong>Live Signal Controls</strong> in the left sidebar and click <strong>Record Snapshot</strong> to plot live classroom engagement.</p></div>',
                     unsafe_allow_html=True,
                 )
 
@@ -596,7 +589,7 @@ def _render_live_session():
             if not seats:
                 st.markdown(
                     '<div class="empty-box"><h4>No Students Enrolled</h4>'
-                    '<p>Add students in the <strong>Roster &amp; Reports</strong> tab so they appear here during live classes.</p></div>',
+                    '<p>Add students in the <strong>Roster &amp; Reports</strong> tab so they appear here during live sessions.</p></div>',
                     unsafe_allow_html=True,
                 )
             else:
@@ -652,7 +645,7 @@ def _render_live_session():
                 with q1:
                     q_text = st.text_input(
                         "Ask Teaching Assistant",
-                        placeholder="Example: Suggest a 2-minute concept check for today's topic",
+                        placeholder="Example: Suggest a 2-minute concept check for today's lecture",
                         label_visibility="collapsed",
                     )
                 with q2:
@@ -698,7 +691,7 @@ def render_live_paused():
 
 
 # ==============================================================================
-# TAB 2: COURSE ROOMS (MULTI-TEACHER COLLABORATION)
+# TAB 2: COURSE ROOMS
 # ==============================================================================
 @st.fragment
 def render_course_rooms():
@@ -821,7 +814,7 @@ def render_course_rooms():
 
 
 # ==============================================================================
-# TAB 3: ATTENDANCE & GRADES (THEORY vs PRACTICAL, CUSTOM THRESHOLD & DISPUTES)
+# TAB 3: ATTENDANCE & GRADES
 # ==============================================================================
 @st.fragment
 def render_attendance_and_grades():
@@ -829,7 +822,6 @@ def render_attendance_and_grades():
     slabs = get_grade_slabs()
     students = load_all_students()
 
-    # Teacher Data Entry Controls (Zero Predefined Data — Easy Guided Input)
     if st.session_state.user_role == "Instructor / Mentor":
         act1, act2, act3 = st.columns([1.2, 1.2, 1.6], vertical_alignment="center")
         with act1:
@@ -962,7 +954,6 @@ def render_attendance_and_grades():
                 st.markdown(f'<p class="sec-title">Subject-Wise Breakdown — {row_s["student_name"]}</p>', unsafe_allow_html=True)
                 st.dataframe(pd.DataFrame(calc_rows), width="stretch", hide_index=True)
 
-    # Daily Summary & Student Flag/Dispute Desk
     d1, d2 = st.columns([1.2, 1], gap="medium")
     with d1:
         with st.container(border=True):
@@ -1222,7 +1213,7 @@ def render_roster_and_reports():
 
 
 # ==============================================================================
-# TAB 6: CUSTOMIZE & WORKSPACE SETTINGS (BUILT FOR TEACHERS)
+# TAB 6: SETTINGS (CUSTOMIZABLE FOR TEACHERS)
 # ==============================================================================
 @st.fragment
 def render_settings_tab():
@@ -1231,11 +1222,13 @@ def render_settings_tab():
     with s_l:
         with st.container(border=True):
             st.markdown('<p class="sec-title">Institution &amp; Color Customization</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Three-color editorial layout: Pure White background, Black Ink highlights, and your chosen Flag Color.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Three-color layout: Pure White background, Black Ink highlights, and your chosen Flag Color.</p>', unsafe_allow_html=True)
 
-            org_in = st.text_input("Institution / Department Name", value=st.session_state.org_name, placeholder="Example: Department of ECE, LNCT Bhopal")
-            if org_in.strip() and org_in != st.session_state.org_name:
-                st.session_state.org_name = org_in.strip()
+            org_in = st.text_input("Institution / Department Name", value=st.session_state.org_name, placeholder="Example: Department of ECE")
+            if st.button("Save Institution Name", width="stretch"):
+                if org_in.strip():
+                    st.session_state.org_name = org_in.strip()
+                    st.rerun()
 
             preset_name = st.selectbox("Quick Flag Color Preset", list(ACCENT_PRESETS.keys()))
             c_btn1, c_btn2 = st.columns(2)

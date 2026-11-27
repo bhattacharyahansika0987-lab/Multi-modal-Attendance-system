@@ -220,7 +220,6 @@ def clear_all_data():
     conn.close()
 
 
-# --- Biometric & Roster Management ---
 def save_student(student_id: str, name: str, embedding: np.ndarray | None = None):
     if embedding is None:
         rng = np.random.default_rng(abs(hash(student_id)) % (2**32))
@@ -262,7 +261,6 @@ def load_all_students():
     ]
 
 
-# --- Session Attendance, Telemetry & AI Coach ---
 def log_attendance(session_id: str, student_id: str, name: str, first_seen: str, last_seen: str, ratio: float, status: str):
     conn = get_connection()
     cur = conn.cursor()
@@ -330,7 +328,6 @@ def get_session_data(session_id: str = "ALL"):
     return df_att, df_eng, df_sug
 
 
-# --- Window-Focus Proctoring & Auto-PDF Reports ---
 def log_proctor_incident(
     session_id: str,
     student_id: str,
@@ -412,7 +409,6 @@ def get_session_reports() -> pd.DataFrame:
     return df
 
 
-# --- Course Rooms (Multi-Teacher Lobbies) ---
 def get_lobbies() -> list[dict]:
     conn = get_connection()
     cur = conn.cursor()
@@ -523,7 +519,6 @@ def get_lobby_assignments(lobby_code: str) -> pd.DataFrame:
     return df
 
 
-# --- Theory vs Practical Attendance Calculator & Customizable Slabs ---
 def add_or_update_subject_record(
     student_id: str,
     student_name: str,
@@ -635,7 +630,6 @@ def compute_student_cumulative_summary(min_threshold: float = 75.0, slabs: dict 
     return pd.DataFrame(rows).sort_values("cumulative_pct", ascending=True).reset_index(drop=True)
 
 
-# --- Daily Summary & Student Dispute Tickets ---
 def add_daily_log(
     student_id: str,
     student_name: str,
@@ -790,7 +784,6 @@ def resolve_dispute_ticket(ticket_id: int, approve: bool, resolution_note: str):
     )
 
 
-# --- Dual Warning & Notification Dispatch ---
 def dispatch_notification(
     recipient_role: str,
     student_id: str,
