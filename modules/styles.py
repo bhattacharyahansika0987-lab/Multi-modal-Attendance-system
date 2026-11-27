@@ -19,25 +19,33 @@ def get_app_css() -> str:
         --bg-surface: #131C31;
         --bg-elevated: #1E293B;
         --bg-hover: #26354D;
-        --border-subtle: #334155;
+        --border-slate: #334155;
         --border-muted: rgba(148, 163, 184, 0.18);
         --text-primary: #F8FAFC;
         --text-secondary: #CBD5E1;
         --text-muted: #94A3B8;
-        --accent-indigo: #6366F1;
-        --accent-indigo-solid: #4F46E5;
-        --accent-indigo-hover: #4338CA;
-        --emerald: #10B981;
-        --sky: #0EA5E9;
-        --amber: #F59E0B;
-        --crimson: #EF4444;
-        --shadow-card: 0 4px 16px rgba(2, 6, 23, 0.35);
+        --indigo-500: #6366F1;
+        --indigo-600: #4F46E5;
+        --indigo-700: #4338CA;
+        --emerald-500: #10B981;
+        --sky-500: #0EA5E9;
+        --amber-500: #F59E0B;
+        --red-500: #EF4444;
+        --shadow-card: 0 4px 20px rgba(2, 6, 23, 0.40);
     }
 
-    html, body, .stApp, [class*="css"] {
+    html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
-        color: var(--text-primary);
+        background-color: var(--bg-canvas) !important;
+        color: var(--text-primary) !important;
         -webkit-font-smoothing: antialiased;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(circle at 8% 0%, rgba(99, 102, 241, 0.13) 0%, transparent 38%),
+            radial-gradient(circle at 92% 4%, rgba(14, 165, 233, 0.08) 0%, transparent 35%),
+            var(--bg-canvas) !important;
     }
 
     .mono, .kpi-value, .kpi-delta, .timer-val, .seat-pct {
@@ -45,14 +53,14 @@ def get_app_css() -> str:
         font-variant-numeric: tabular-nums;
     }
 
-    /* Keep header transparent so sidebar reopen icon stays visible & crisp */
+    /* Transparent Header (Preserves Sidebar Reopen Arrow) */
     header[data-testid="stHeader"] {
         background: transparent !important;
     }
     header[data-testid="stHeader"] button,
     header[data-testid="stHeader"] svg {
-        color: #CBD5E1 !important;
-        fill: #CBD5E1 !important;
+        color: var(--text-secondary) !important;
+        fill: var(--text-secondary) !important;
     }
     #MainMenu,
     footer,
@@ -61,13 +69,6 @@ def get_app_css() -> str:
     div[data-testid="stStatusWidget"] {
         display: none !important;
         visibility: hidden !important;
-    }
-
-    .stApp {
-        background:
-            radial-gradient(circle at 10% 0%, rgba(99, 102, 241, 0.12) 0%, transparent 38%),
-            radial-gradient(circle at 90% 4%, rgba(14, 165, 233, 0.08) 0%, transparent 36%),
-            var(--bg-canvas) !important;
     }
 
     .block-container {
@@ -83,21 +84,14 @@ def get_app_css() -> str:
         background-color: #0B1222 !important;
         border-right: 1px solid var(--border-muted) !important;
     }
-    section[data-testid="stSidebar"] .block-container {
-        padding-top: 1.25rem !important;
-        padding-left: 1.15rem !important;
-        padding-right: 1.15rem !important;
-    }
     section[data-testid="stSidebar"] p,
     section[data-testid="stSidebar"] label,
     section[data-testid="stSidebar"] span {
         color: var(--text-secondary);
     }
-
-    /* Sidebar Demo Controls & Settings Expanders */
     section[data-testid="stSidebar"] details {
         background-color: var(--bg-surface) !important;
-        border: 1px solid var(--border-subtle) !important;
+        border: 1px solid var(--border-slate) !important;
         border-radius: 10px !important;
         padding: 2px 6px;
     }
@@ -107,32 +101,31 @@ def get_app_css() -> str:
         color: var(--text-primary) !important;
     }
 
-    /* Inputs, Selectboxes, Textareas & Dropdown Menus */
+    /* Inputs, Dropdowns & Menus */
     div[data-baseweb="input"] > div,
     div[data-baseweb="select"] > div,
     textarea,
     .stTextInput input,
     .stNumberInput input {
         background-color: var(--bg-elevated) !important;
-        border: 1px solid var(--border-subtle) !important;
+        border: 1px solid var(--border-slate) !important;
         border-radius: 8px !important;
         color: var(--text-primary) !important;
-        transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
     div[data-baseweb="select"] > div *,
     div[data-baseweb="input"] input {
         color: var(--text-primary) !important;
     }
     div[data-baseweb="select"] svg {
-        fill: #CBD5E1 !important;
+        fill: var(--text-secondary) !important;
     }
     div[data-baseweb="input"] > div:hover,
     div[data-baseweb="select"] > div:hover {
-        border-color: var(--accent-indigo) !important;
+        border-color: var(--indigo-500) !important;
     }
     ul[data-baseweb="menu"] {
         background-color: var(--bg-elevated) !important;
-        border: 1px solid var(--border-subtle) !important;
+        border: 1px solid var(--border-slate) !important;
     }
     ul[data-baseweb="menu"] li {
         color: var(--text-primary) !important;
@@ -141,7 +134,7 @@ def get_app_css() -> str:
         background-color: var(--bg-hover) !important;
     }
 
-    /* Popover Trigger Buttons & Popover Body (Fixes Dark-on-Dark Buttons) */
+    /* High-Contrast Popover Triggers ('New Room', 'Join Room', 'New Assignment') */
     [data-testid="stPopover"] button,
     [data-testid="stPopoverButton"] {
         background-color: var(--bg-elevated) !important;
@@ -160,57 +153,52 @@ def get_app_css() -> str:
     }
     [data-testid="stPopover"] button:hover,
     [data-testid="stPopoverButton"]:hover {
-        background-color: var(--accent-indigo-solid) !important;
-        border-color: var(--accent-indigo) !important;
+        background-color: var(--indigo-600) !important;
+        border-color: var(--indigo-500) !important;
         color: #FFFFFF !important;
     }
     [data-testid="stPopoverBody"] {
         background-color: var(--bg-surface) !important;
-        border: 1px solid var(--border-subtle) !important;
+        border: 1px solid var(--border-slate) !important;
         border-radius: 12px !important;
-        color: var(--text-primary) !important;
     }
 
-    /* High-Contrast Buttons (Primary & Outline Secondary — Fixes Washed-Out 'Host Next') */
+    /* High-Contrast Action Buttons ('Host Next' & Primary CTAs) */
     .stButton > button,
     .stDownloadButton > button,
     .stFormSubmitButton > button {
         border-radius: 8px !important;
         font-weight: 600 !important;
         font-size: 0.84rem !important;
-        min-height: 2.4rem !important;
+        min-height: 2.45rem !important;
         white-space: nowrap !important;
         transition: all 0.16s ease !important;
     }
     .stButton > button[kind="secondary"],
     .stDownloadButton > button[kind="secondary"],
     .stFormSubmitButton > button[kind="secondary"] {
-        background-color: rgba(99, 102, 241, 0.12) !important;
-        border: 1px solid rgba(99, 102, 241, 0.55) !important;
-        color: #E0E7FF !important;
+        background-color: rgba(99, 102, 241, 0.15) !important;
+        border: 1px solid #6366F1 !important;
+        color: #F8FAFC !important;
     }
     .stButton > button[kind="secondary"] *,
     .stDownloadButton > button[kind="secondary"] *,
     .stFormSubmitButton > button[kind="secondary"] * {
-        color: #E0E7FF !important;
+        color: #F8FAFC !important;
     }
     .stButton > button[kind="secondary"]:hover,
     .stDownloadButton > button[kind="secondary"]:hover,
     .stFormSubmitButton > button[kind="secondary"]:hover {
-        background-color: var(--accent-indigo-solid) !important;
-        border-color: var(--accent-indigo) !important;
+        background-color: var(--indigo-600) !important;
+        border-color: #818CF8 !important;
         color: #FFFFFF !important;
-        transform: translateY(-1px);
-    }
-    .stButton > button[kind="secondary"]:hover *,
-    .stDownloadButton > button[kind="secondary"]:hover * {
-        color: #FFFFFF !important;
+        box-shadow: 0 2px 10px rgba(99, 102, 241, 0.35) !important;
     }
     .stButton > button[kind="primary"],
     .stDownloadButton > button[kind="primary"],
     .stFormSubmitButton > button[kind="primary"] {
-        background-color: var(--accent-indigo-solid) !important;
-        border: 1px solid var(--accent-indigo) !important;
+        background-color: var(--indigo-600) !important;
+        border: 1px solid var(--indigo-500) !important;
         color: #FFFFFF !important;
     }
     .stButton > button[kind="primary"] *,
@@ -220,14 +208,14 @@ def get_app_css() -> str:
     }
     .stButton > button[kind="primary"]:hover,
     .stDownloadButton > button[kind="primary"]:hover {
-        background-color: var(--accent-indigo-hover) !important;
+        background-color: var(--indigo-700) !important;
         border-color: #818CF8 !important;
     }
 
-    /* Elevated Dark Slate Containers */
+    /* Elevated Card Containers */
     [data-testid="stVerticalBlockBorderWrapper"] {
         background-color: var(--bg-surface) !important;
-        border: 1px solid var(--border-subtle) !important;
+        border: 1px solid var(--border-slate) !important;
         border-radius: 12px !important;
         box-shadow: var(--shadow-card) !important;
     }
@@ -238,13 +226,13 @@ def get_app_css() -> str:
         border-radius: 10px !important;
     }
 
-    /* High-Contrast Navigation Tabs (Fixes Invisible Inactive Tabs & Red Underline) */
+    /* Legible Segmented Navigation Tabs (WCAG AA+ Contrast) */
     .stTabs [data-baseweb="tab-list"] {
         gap: 6px !important;
         background-color: var(--bg-surface) !important;
         padding: 5px !important;
         border-radius: 11px !important;
-        border: 1px solid var(--border-subtle) !important;
+        border: 1px solid var(--border-slate) !important;
         margin-bottom: 1.25rem !important;
     }
     .stTabs button[data-baseweb="tab"] {
@@ -261,15 +249,15 @@ def get_app_css() -> str:
         font-size: 0.86rem !important;
     }
     .stTabs button[data-baseweb="tab"]:hover {
-        background-color: rgba(148, 163, 184, 0.10) !important;
+        background-color: rgba(148, 163, 184, 0.12) !important;
     }
     .stTabs button[data-baseweb="tab"]:hover p,
     .stTabs button[data-baseweb="tab"]:hover span {
         color: #F8FAFC !important;
     }
     .stTabs button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: var(--accent-indigo-solid) !important;
-        border: 1px solid var(--accent-indigo) !important;
+        background-color: var(--indigo-600) !important;
+        border: 1px solid var(--indigo-500) !important;
         box-shadow: 0 2px 10px rgba(79, 70, 229, 0.35) !important;
     }
     .stTabs button[data-baseweb="tab"][aria-selected="true"] p,
@@ -286,7 +274,7 @@ def get_app_css() -> str:
     /* Top Workspace Header */
     .top-bar {
         background-color: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
+        border: 1px solid var(--border-slate);
         border-radius: 12px;
         padding: 15px 22px;
         margin-bottom: 16px;
@@ -296,11 +284,7 @@ def get_app_css() -> str:
         gap: 16px;
         box-shadow: var(--shadow-card);
     }
-    .brand-wrap {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
+    .brand-wrap { display: flex; align-items: center; gap: 12px; }
     .brand-mark {
         width: 38px;
         height: 38px;
@@ -326,12 +310,7 @@ def get_app_css() -> str:
         margin: 2px 0 0 0 !important;
         line-height: 1.3 !important;
     }
-    .top-meta {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: nowrap;
-    }
+    .top-meta { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
     .chip {
         display: inline-flex;
         align-items: center;
@@ -342,12 +321,12 @@ def get_app_css() -> str:
         border-radius: 999px;
         font-size: 0.74rem;
         font-weight: 600;
-        border: 1px solid var(--border-subtle);
+        border: 1px solid var(--border-slate);
         background-color: var(--bg-elevated);
         color: #E2E8F0;
     }
     .chip-live {
-        background-color: rgba(16, 185, 129, 0.14);
+        background-color: rgba(16, 185, 129, 0.15);
         border-color: rgba(16, 185, 129, 0.45);
         color: #6EE7B7;
     }
@@ -357,9 +336,7 @@ def get_app_css() -> str:
         color: #FCA5A5;
     }
     .dot-live {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
+        width: 7px; height: 7px; border-radius: 50%;
         background-color: #10B981;
         box-shadow: 0 0 8px rgba(16, 185, 129, 0.85);
     }
@@ -378,67 +355,12 @@ def get_app_css() -> str:
         margin: 0 0 12px 0 !important;
     }
 
-    /* KPI Cards */
-    .kpi-card {
-        background-color: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
-        border-radius: 12px;
-        padding: 16px 18px;
-        box-shadow: var(--shadow-card);
-    }
-    .kpi-top {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-    }
-    .kpi-label {
-        font-size: 0.76rem;
-        font-weight: 500;
-        color: #94A3B8;
-    }
-    .kpi-badge {
-        font-size: 0.69rem;
-        font-weight: 600;
-        padding: 2px 9px;
-        border-radius: 999px;
-        white-space: nowrap;
-    }
-    .badge-optimal { background: rgba(16, 185, 129, 0.15); color: #6EE7B7; border: 1px solid rgba(16, 185, 129, 0.4); }
-    .badge-watch { background: rgba(245, 158, 11, 0.15); color: #FCD34D; border: 1px solid rgba(245, 158, 11, 0.4); }
-    .badge-risk { background: rgba(239, 68, 68, 0.15); color: #FCA5A5; border: 1px solid rgba(239, 68, 68, 0.4); }
-
-    .kpi-mid {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-end;
-        gap: 10px;
-    }
-    .kpi-value {
-        font-size: 1.75rem;
-        font-weight: 700;
-        letter-spacing: -0.025em;
-        color: #F8FAFC;
-        line-height: 1.1;
-    }
-    .kpi-delta {
-        display: inline-block;
-        margin-top: 5px;
-        font-size: 0.73rem;
-        font-weight: 600;
-        padding: 2px 7px;
-        border-radius: 6px;
-    }
-    .delta-pos { background: rgba(16, 185, 129, 0.16); color: #6EE7B7; }
-    .delta-neg { background: rgba(245, 158, 11, 0.16); color: #FCD34D; }
-    .delta-flat { background: var(--bg-elevated); color: #94A3B8; }
-
     /* Elevated Faculty Cards & Glowing Pill Badges */
     .faculty-card {
         background-color: var(--bg-elevated);
-        border: 1px solid var(--border-subtle);
+        border: 1px solid var(--border-slate);
         border-radius: 10px;
-        padding: 13px 16px;
+        padding: 14px 16px;
         margin-bottom: 10px;
         display: flex;
         justify-content: space-between;
@@ -446,39 +368,30 @@ def get_app_css() -> str:
         gap: 12px;
     }
     .faculty-card-hosting {
-        border-color: rgba(16, 185, 129, 0.45);
-        background: linear-gradient(90deg, rgba(16, 185, 129, 0.08) 0%, #1E293B 45%);
+        border-color: rgba(16, 185, 129, 0.50);
+        background: linear-gradient(90deg, rgba(16, 185, 129, 0.10) 0%, #1E293B 45%);
     }
-    .faculty-name {
-        font-size: 0.90rem;
-        font-weight: 600;
-        color: #F8FAFC;
-        line-height: 1.25;
-    }
-    .faculty-subject {
-        font-size: 0.79rem;
-        color: #94A3B8;
-        margin-top: 3px;
-    }
+    .faculty-name { font-size: 0.90rem; font-weight: 600; color: #F8FAFC; line-height: 1.25; }
+    .faculty-subject { font-size: 0.79rem; color: #94A3B8; margin-top: 3px; }
     .status-pill-hosting {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 11px;
+        padding: 4px 12px;
         border-radius: 999px;
         font-size: 0.73rem;
         font-weight: 600;
         color: #6EE7B7;
         background-color: rgba(16, 185, 129, 0.16);
         border: 1px solid rgba(16, 185, 129, 0.55);
-        box-shadow: 0 0 14px rgba(16, 185, 129, 0.25);
+        box-shadow: 0 0 14px rgba(16, 185, 129, 0.28);
         white-space: nowrap;
     }
     .status-pill-available {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 11px;
+        padding: 4px 12px;
         border-radius: 999px;
         font-size: 0.73rem;
         font-weight: 600;
@@ -487,28 +400,32 @@ def get_app_css() -> str:
         border: 1px solid rgba(14, 165, 233, 0.45);
         white-space: nowrap;
     }
-    .pill-dot-emerald {
-        width: 7px; height: 7px; border-radius: 50%;
-        background-color: #10B981;
-        box-shadow: 0 0 8px #10B981;
-    }
-    .pill-dot-sky {
-        width: 7px; height: 7px; border-radius: 50%;
-        background-color: #0EA5E9;
-    }
+    .pill-dot-emerald { width: 7px; height: 7px; border-radius: 50%; background-color: #10B981; box-shadow: 0 0 8px #10B981; }
+    .pill-dot-sky { width: 7px; height: 7px; border-radius: 50%; background-color: #0EA5E9; }
 
-    /* Student Seat Cards */
-    .seat-card {
-        background-color: var(--bg-elevated);
-        border: 1px solid var(--border-subtle);
-        border-radius: 10px;
-        padding: 12px 14px;
-        margin-bottom: 8px;
+    /* KPI, Seat, Coach & Notification Cards */
+    .kpi-card {
+        background-color: var(--bg-surface);
+        border: 1px solid var(--border-slate);
+        border-radius: 12px;
+        padding: 16px 18px;
+        box-shadow: var(--shadow-card);
     }
-    .seat-card-risk {
-        background-color: rgba(239, 68, 68, 0.10);
-        border-color: rgba(239, 68, 68, 0.45);
-    }
+    .kpi-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .kpi-label { font-size: 0.76rem; font-weight: 500; color: #94A3B8; }
+    .kpi-badge { font-size: 0.69rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+    .badge-optimal { background: rgba(16, 185, 129, 0.15); color: #6EE7B7; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-watch { background: rgba(245, 158, 11, 0.15); color: #FCD34D; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .badge-risk { background: rgba(239, 68, 68, 0.15); color: #FCA5A5; border: 1px solid rgba(239, 68, 68, 0.4); }
+    .kpi-mid { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
+    .kpi-value { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.025em; color: #F8FAFC; line-height: 1.1; }
+    .kpi-delta { display: inline-block; margin-top: 5px; font-size: 0.73rem; font-weight: 600; padding: 2px 7px; border-radius: 6px; }
+    .delta-pos { background: rgba(16, 185, 129, 0.16); color: #6EE7B7; }
+    .delta-neg { background: rgba(245, 158, 11, 0.16); color: #FCD34D; }
+    .delta-flat { background: var(--bg-elevated); color: #94A3B8; }
+
+    .seat-card { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+    .seat-card-risk { background-color: rgba(239, 68, 68, 0.10); border-color: rgba(239, 68, 68, 0.45); }
     .seat-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
     .seat-name { font-size: 0.85rem; font-weight: 600; color: #F8FAFC; }
     .seat-id { font-size: 0.74rem; color: #94A3B8; }
@@ -516,80 +433,20 @@ def get_app_css() -> str:
     .seat-bar-fill { height: 100%; border-radius: 99px; }
     .seat-meta { display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem; color: #CBD5E1; }
 
-    /* Assistant & Notification Cards */
-    .coach-card {
-        background-color: var(--bg-elevated);
-        border: 1px solid var(--border-subtle);
-        border-left: 3px solid var(--accent-indigo);
-        border-radius: 10px;
-        padding: 12px 14px;
-        margin-bottom: 8px;
-    }
+    .coach-card { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-left: 3px solid var(--indigo-500); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
     .coach-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-    .coach-badge {
-        font-size: 0.68rem;
-        font-weight: 600;
-        padding: 2px 9px;
-        border-radius: 999px;
-        background-color: rgba(99, 102, 241, 0.18);
-        color: #C7D2FE;
-        border: 1px solid rgba(99, 102, 241, 0.4);
-    }
+    .coach-badge { font-size: 0.68rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; background-color: rgba(99, 102, 241, 0.18); color: #C7D2FE; border: 1px solid rgba(99, 102, 241, 0.4); }
     .coach-body { font-size: 0.83rem; line-height: 1.55; color: #E2E8F0; }
 
-    .alert-banner {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        background-color: rgba(239, 68, 68, 0.14);
-        border: 1px solid rgba(239, 68, 68, 0.45);
-        border-radius: 10px;
-        padding: 11px 15px;
-        color: #FCA5A5;
-        font-size: 0.83rem;
-        font-weight: 500;
-        margin-bottom: 14px;
-    }
-
-    .notif-card {
-        background-color: var(--bg-elevated);
-        border: 1px solid var(--border-subtle);
-        border-radius: 10px;
-        padding: 12px 14px;
-        margin-bottom: 8px;
-    }
+    .alert-banner { display: flex; align-items: center; gap: 10px; background-color: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.45); border-radius: 10px; padding: 11px 15px; color: #FCA5A5; font-size: 0.83rem; font-weight: 500; margin-bottom: 14px; }
+    .notif-card { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
     .notif-critical { border-left: 3px solid #EF4444; }
     .notif-warning { border-left: 3px solid #F59E0B; }
     .notif-info { border-left: 3px solid #10B981; }
 
-    .room-summary {
-        background-color: var(--bg-elevated);
-        border: 1px solid var(--border-subtle);
-        border-radius: 10px;
-        padding: 14px 16px;
-        margin-bottom: 12px;
-    }
-    .room-code {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.74rem;
-        font-weight: 600;
-        color: #A5B4FC;
-        background-color: rgba(99, 102, 241, 0.14);
-        border: 1px solid rgba(99, 102, 241, 0.35);
-        padding: 3px 9px;
-        border-radius: 6px;
-        white-space: nowrap;
-    }
-
-    .privacy-box {
-        background-color: var(--bg-surface);
-        border: 1px solid var(--border-subtle);
-        border-radius: 10px;
-        padding: 12px 13px;
-        font-size: 0.76rem;
-        line-height: 1.65;
-        color: #CBD5E1;
-    }
+    .room-summary { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+    .room-code { font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; font-weight: 600; color: #A5B4FC; background-color: rgba(99, 102, 241, 0.14); border: 1px solid rgba(99, 102, 241, 0.35); padding: 3px 9px; border-radius: 6px; white-space: nowrap; }
+    .privacy-box { background-color: var(--bg-surface); border: 1px solid var(--border-slate); border-radius: 10px; padding: 12px 13px; font-size: 0.76rem; line-height: 1.65; color: #CBD5E1; }
     .dot-ok { color: #10B981; font-weight: 700; margin-right: 5px; }
     .dot-muted { color: #94A3B8; font-weight: 700; margin-right: 5px; }
     </style>
