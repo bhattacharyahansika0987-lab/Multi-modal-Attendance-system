@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AttendAI Focus Monitor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: transparent;
+      color: #0F172A;
+      padding: 2px;
+    }
+    .box {
+      background: #F8FAFC;
+      border: 1px solid #CBD5E1;
+      border-radius: 10px;
+      padding: 14px 16px;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+    }
+    .box.alert {
+      background: #FEF2F2;
+      border-color: var(--accent, #C81E1E);
+    }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0F172A;
+    }
+    .pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: #ECFDF5;
+      color: #047857;
+      border: 1px solid #A7F3D0;
+      white-space: nowrap;
+    }
+    .pill.warn {
+      background: #FFFFFF;
+      color: var(--accent, #C81E1E);
+      border-color: var(--accent, #C81E1E);
+    }
+    .sub {
+      font-size: 12px;
+      color: #475569;
+      line-height: 1.45;
+    }
+    .log {
+      margin-top: 10px;
+      font-size: 11.5px;
+      color: #334155;
+      max-height: 76px;
+      overflow-y: auto;
+      border-top: 1px solid #E2E8F0;
+      padding-top: 8px;
+      display: none;
+    }
+    .log-row {
+      padding: 2px 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="fg-box" class="box">
+    <div class="top">
+      <div class="title" id="fg-title">Live Window Focus Monitor (Connected)</div>
+      <span id="fg-pill" class="pill">In Window &middot; 0 Exits</span>
+    </div>
+    <div id="fg-msg" class="sub">
+      Monitoring browser tab visibility and window focus for this session. Any window exit is logged with exact leave/return timestamps for instructor review (never auto-marked Absent).
+    </div>
+    <div id="fg-log" class="log"></div>
+  </div>
+
+  <script>
+    (function () {
+      let config = {
+        session_id: "",
+        room_code: "",
+        student_id: "",
+        student_name: "",
+        accent_color: "#C81E1E",
+        review_threshold: 3
+      };
+      let activeLeave = null;
+      let exitCount = 0;
+
+      const box = document.getElementById("fg-box");
+      const titleEl = document.getElementById("fg-title");
+      const pillEl = document.getElementById("fg-pill");
+      const msgEl = document.getElementById("fg-msg");
+      const logEl = document.getElementById("fg-log");
+
+      function sendMessageToStreamlit(type, data) {
+        window.parent.postMessage(
+          Object.assign({ isStreamlitMessage: true, type: type }, data || {}),
+          "*"
+        );
+      }
+
+      function updateFrameHeight() {
+        const h = Math.max(115, document.body.scrollHeight + 8);
+        sendMessageToStreamlit("streamlit:setFrameHeight", { height: h });
+      }
+
+      function makeUid() {
+        return (
+          (config.session_id || "S") +
+          "_" +
+          (config.student_id || "U") +
+          "_" +
+          Date.now() +
+          "_" +
+          Math.floor(Math.random() * 100000)
+        );
+      }
+
+      function renderBadge() {
+        box.style.setProperty("--accent", config.accent_color || "#C81E1E");
+        if (config.student_name && config.room_code) {
+          titleEl.textContent =
+            "Focus Monitor · " + config.student_name + " (" + config.room_code + ")";
+        }
+        if (activeLeave) {
+          box.classList.add("alert");
+          pillEl.classList.add("warn");
+          pillEl.textContent = "Away · " + exitCount + " Exit" + (exitCount === 1 ? "" : "s");
+        } else if (exitCount > 0) {
+          box.classList.add("alert");
+          pillEl.classList.add("warn");
+          pillEl.textContent =
+            "Returned · " + exitCount + " Exit" + (exitCount === 1 ? "" : "s") + " Logged";
+        } else {
+          box.classList.remove("alert");
+          pillEl.classList.remove("warn");
+          pillEl.textContent = "In Window · 0 Exits";
+        }
+        updateFrameHeight();
+      }
+
+      function appendLog(text) {
+        logEl.style.display = "block";
+        const row = document.createElement("div");
+        row.className = "log-row";
+        row.textContent = text;
+        logEl.prepend(row);
+        updateFrameHeight();
+      }
+
+      function handleLeave(eventType) {
+        if (activeLeave !== null || !config.student_id) return;
+        const nowMs = Date.now();
+        const leftIso = new Date(nowMs).toISOString();
+        exitCount += 1;
+        activeLeave = {
+          event_uid: makeUid(),
+          event_type: eventType,
+          left_at_ms: nowMs,
+          left_at: leftIso
+        };
+
+        renderBadge();
+        appendLog(new Date(nowMs).toLocaleTimeString() + " — Left window (" + eventType + ")");
+
+        sendMessageToStreamlit("streamlit:setComponentValue", {
+          value: {
+            event_uid: activeLeave.event_uid,
+            session_id: config.session_id,
+            room_code: config.room_code,
+            student_id: config.student_id,
+            student_name: config.student_name,
+            event_type: activeLeave.event_type,
+            status: "AWAY",
+            left_at: activeLeave.left_at,
+            returned_at: null,
+            duration_sec: null
+          }
+        });
+      }
+
+      function handleReturn() {
+        if (activeLeave === null || !config.student_id) return;
+        const nowMs = Date.now();
+        const returnedIso = new Date(nowMs).toISOString();
+        const durationSec = Math.max(0.1, Number(((nowMs - activeLeave.left_at_ms) / 1000).toFixed(1)));
+        const finished = activeLeave;
+        activeLeave = null;
+
+        renderBadge();
+        if (logEl.firstChild) {
+          logEl.firstChild.textContent += " · returned after " + durationSec + "s (sent to instructor)";
+        }
+        if (exitCount >= (config.review_threshold || 3)) {
+          msgEl.textContent =
+            "Multiple window exits detected and sent to the instructor's Review Queue for manual review.";
+        }
+
+        sendMessageToStreamlit("streamlit:setComponentValue", {
+          value: {
+            event_uid: finished.event_uid,
+            session_id: config.session_id,
+            room_code: config.room_code,
+            student_id: config.student_id,
+            student_name: config.student_name,
+            event_type: finished.event_type,
+            status: "RETURNED",
+            left_at: finished.left_at,
+            returned_at: returnedIso,
+            duration_sec: durationSec
+          }
+        });
+      }
+
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) handleLeave("tab_hidden");
+        else handleReturn();
+      });
+      window.addEventListener("blur", function () {
+        handleLeave("window_blur");
+      });
+      window.addEventListener("focus", function () {
+        handleReturn();
+      });
+
+      window.addEventListener("message", function (event) {
+        if (!event.data || event.data.type !== "streamlit:render") return;
+        const args = event.data.args || {};
+        config = Object.assign(config, args);
+        renderBadge();
+      });
+
+      sendMessageToStreamlit("streamlit:componentReady", { apiVersion: 1 });
+      updateFrameHeight();
+    })();
+  </script>
+</body>
+</html>

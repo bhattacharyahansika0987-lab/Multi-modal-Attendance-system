@@ -1,59 +1,63 @@
+from __future__ import annotations
+
 import base64
-import cv2
-import random
-import numpy as np
+from datetime import datetime, timedelta
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
-from datetime import datetime, timedelta
 
+from modules.agent import TeachingAdvisorAgent
+from modules.attendance import STATE_NEEDS_REVIEW, STATE_PRESENT
 from modules.database import (
-    init_db,
-    clear_all_data,
-    load_all_students,
-    save_student,
-    delete_student,
-    log_attendance,
-    log_engagement,
-    get_session_list,
-    get_session_data,
-    log_proctor_incident,
-    get_proctor_incidents,
-    save_session_report,
-    get_session_reports,
-    get_lobbies,
-    create_lobby,
-    join_lobby_teacher,
-    get_lobby_teachers,
-    set_lobby_active_host,
+    acknowledge_notification,
+    add_daily_log,
     add_lobby_assignment,
-    get_lobby_assignments,
     add_or_update_subject_record,
-    get_student_subject_records,
-    compute_student_cumulative_summary,
+    clear_all_data,
     compute_internal_grade,
     compute_recovery_classes,
-    add_daily_log,
-    get_daily_logs,
+    compute_student_cumulative_summary,
     create_dispute_ticket,
-    get_dispute_tickets,
-    resolve_dispute_ticket,
-    dispatch_notification,
+    create_lobby,
     dispatch_below_threshold_warnings,
+    dispatch_notification,
+    get_attention_snapshots,
+    get_daily_logs,
+    get_dispute_tickets,
+    get_lobbies,
+    get_lobby_assignments,
+    get_lobby_teachers,
     get_notifications,
-    acknowledge_notification,
+    get_session_reports,
+    get_student_subject_records,
+    init_db,
+    join_lobby_teacher,
+    load_all_students,
+    log_engagement,
+    resolve_dispute_ticket,
+    set_lobby_active_host,
 )
-from modules.agent import TeachingAdvisorAgent
+from modules.live_attendance_ui import (
+    ensure_phase1_state,
+    finalize_real_session_and_export_pdf,
+    get_or_build_tracker,
+    render_demo_mode_banner,
+    render_honest_kpi_card,
+    render_instructor_focus_feed,
+    render_live_face_capture_section,
+    render_phase1_roster_enrollment,
+    render_real_attention_section,
+    render_student_live_focus_view,
+)
 from modules.styles import (
     SVG_ICONS,
     get_app_css,
-    render_top_nav_html,
-    render_kpi_html,
-    render_faculty_card_html,
-    render_seat_card_html,
-    render_focus_guard_widget,
     render_auto_pdf_download_script,
+    render_faculty_card_html,
+    render_kpi_html,
+    render_top_nav_html,
 )
 
 # --- Page Config ---
@@ -65,8 +69,8 @@ st.set_page_config(
 )
 
 init_db()
+ensure_phase1_state()
 
-# Exact 6 Lecture Duration Options (45 min to 2 hrs)
 DURATION_OPTIONS = {
     "45 minutes": 45,
     "1 hour": 60,
@@ -76,7 +80,6 @@ DURATION_OPTIONS = {
     "2 hours": 120,
 }
 
-# 5 WCAG AA Accessible Flag / Highlight Presets
 ACCENT_PRESETS = {
     "Crimson Flag": "#C81E1E",
     "Cobalt Royal": "#1D4ED8",
@@ -85,7 +88,6 @@ ACCENT_PRESETS = {
     "Deep Plum": "#6D28D9",
 }
 
-# --- Session State (Zero Predefined Demo Data) ---
 defaults = {
     "org_name": "Campus Workspace",
     "accent_color": "#C81E1E",
@@ -98,9 +100,7 @@ defaults = {
     "session_remaining_sec": 45 * 60,
     "stream_playing": False,
     "stream_speed": "1x",
-    "max_strikes": 3,
     "min_attendance_pct": 75,
-    "presence_req_pct": 60,
     "grade_a_plus": 90,
     "grade_a": 85,
     "grade_max_marks": 5,
@@ -119,8 +119,6 @@ defaults = {
     },
     "engagement_history": [],
     "suggestion_feed": [],
-    "live_seats": {},
-    "drop_alert": None,
     "auto_pdf_payload": None,
     "last_generated_pdf": None,
 }
@@ -132,16 +130,7 @@ ACCENT = st.session_state.accent_color
 st.markdown(get_app_css(ACCENT), unsafe_allow_html=True)
 
 PLOTLY_CFG = {"displayModeBar": False}
-PLOTLY_HOVER = dict(bgcolor="#FFFFFF", bordercolor="#000000", font=dict(color="#000000", family="Inter", size=12))
-
-
-@st.cache_resource(show_spinner="Preparing face verification engine...")
-def get_face_analyzer():
-    from insightface.app import FaceAnalysis
-
-    face_app = FaceAnalysis(name="buffalo_sc", providers=["CPUExecutionProvider"])
-    face_app.prepare(ctx_id=0, det_size=(320, 320))
-    return face_app
+PLOTLY_HOVER = dict(bgcolor="#FFFFFF", bordercolor="#E2E8F0", font=dict(color="#0F172A", family="Inter", size=12))
 
 
 def get_grade_slabs() -> dict:
@@ -150,25 +139,6 @@ def get_grade_slabs() -> dict:
         "a": st.session_state.grade_a,
         "max_marks": st.session_state.grade_max_marks,
     }
-
-
-def sync_live_seats():
-    roster = load_all_students()
-    valid_ids = {s["student_id"] for s in roster}
-    for sid in list(st.session_state.live_seats.keys()):
-        if sid not in valid_ids:
-            del st.session_state.live_seats[sid]
-    for s in roster:
-        sid = s["student_id"]
-        if sid not in st.session_state.live_seats:
-            st.session_state.live_seats[sid] = {
-                "student_id": sid,
-                "name": s["name"],
-                "presence": 100.0,
-                "focus_state": "Ready",
-                "strikes": 0,
-                "status": "Present",
-            }
 
 
 def get_active_room() -> dict | None:
@@ -183,179 +153,45 @@ def get_active_room() -> dict | None:
     return lobbies[0]
 
 
-def compute_weighted_engagement(gaze: float, move: float, audio: float) -> float:
-    w_sum = max(1, st.session_state.w_gaze + st.session_state.w_move + st.session_state.w_audio)
-    score = (
-        gaze * (st.session_state.w_gaze / w_sum)
-        + move * (st.session_state.w_move / w_sum)
-        + audio * (st.session_state.w_audio / w_sum)
+def record_demo_engagement_step(front_ratio: float, alignment: float) -> None:
+    """DEMO MODE ONLY: logs simulated visual sliders (audio explicitly Not measured)."""
+    w_sum = max(1, st.session_state.w_gaze + st.session_state.w_move)
+    total = round(
+        front_ratio * (st.session_state.w_gaze / w_sum)
+        + alignment * (st.session_state.w_move / w_sum),
+        1,
     )
-    return round(score, 1)
-
-
-def push_telemetry_step(gaze: float, move: float, audio: float, trigger_ai: bool = False):
-    total = compute_weighted_engagement(gaze, move, audio)
-    metrics = {
+    st.session_state.latest_metrics = {
         "total_engagement": total,
-        "gaze_score": round(gaze, 1),
-        "movement_score": round(move, 1),
-        "audio_score": round(audio, 1),
-        "inactivity_sec": 18.0 if move < 50 else 1.5,
+        "gaze_score": round(front_ratio, 1),
+        "movement_score": round(alignment, 1),
+        "audio_score": 0.0,
+        "inactivity_sec": 0.0,
     }
-    st.session_state.latest_metrics = metrics
     st.session_state.engagement_history.append({
         "Time": datetime.now().strftime("%H:%M:%S"),
-        "Overall": total,
-        "Visual Attention": metrics["gaze_score"],
-        "Posture & Activity": metrics["movement_score"],
-        "Class Discussion": metrics["audio_score"],
+        "Combined Attention (SIMULATED)": total,
+        "Facing-Front Ratio (SIMULATED)": round(front_ratio, 1),
+        "Head Alignment (SIMULATED)": round(alignment, 1),
     })
     st.session_state.engagement_history = st.session_state.engagement_history[-24:]
-    log_engagement(st.session_state.session_id, metrics["gaze_score"], metrics["movement_score"], metrics["audio_score"], total)
-
-    for seat in st.session_state.live_seats.values():
-        if seat["strikes"] < int(st.session_state.max_strikes):
-            delta = 0.5 if total >= 65 else -1.5
-            seat["presence"] = round(min(100.0, max(20.0, seat["presence"] + delta)), 1)
-            seat["focus_state"] = "Engaged" if gaze >= 70 else ("Distracted" if gaze >= 50 else "Low Focus")
-            seat["status"] = "Present" if seat["presence"] >= st.session_state.presence_req_pct else "Verifying"
-
-    hist = st.session_state.engagement_history
-    peak = max(item["Overall"] for item in hist[-5:]) if len(hist) >= 2 else total
-    if peak - total >= 15.0:
-        st.session_state.drop_alert = f"Attention dropped {round(peak - total, 1)}% ({peak}% to {total}%). Consider a brief interactive check."
-    elif 0 < total < 55.0:
-        st.session_state.drop_alert = f"Class engagement is below target ({total}%). Review Teaching Assistant suggestions."
-    else:
-        st.session_state.drop_alert = None
-
-    if trigger_ai:
-        agent = TeachingAdvisorAgent()
-        seats = list(st.session_state.live_seats.values())
-        present_cnt = sum(1 for s in seats if "Present" in s["status"])
-        adv = agent.generate_advice(st.session_state.session_id, metrics, present_cnt, max(1, len(seats)))
-        st.session_state.suggestion_feed.insert(
-            0,
-            {"category": adv["category"], "time": datetime.now().strftime("%H:%M"), "text": adv["text"]},
-        )
+    log_engagement(st.session_state.session_id, front_ratio, alignment, 0.0, total, is_demo=True)
 
 
-def record_focus_flag(student_id: str, reason: str = "Switched tab / left window"):
-    max_s = int(st.session_state.max_strikes)
-    seat = st.session_state.live_seats.get(student_id)
-    if not seat:
-        return None, ""
-    seat["strikes"] += 1
-    room = get_active_room()
-    subj = room["active_subject"] if room else (st.session_state.session_subject or "Scheduled Lecture")
-    if seat["strikes"] >= max_s:
-        seat["status"] = "Absent (Focus Limit)"
-        seat["focus_state"] = "Limit Exceeded"
-        seat["presence"] = max(0.0, seat["presence"] - 30.0)
-        action = f"Marked Absent ({max_s}/{max_s} flags) · Guardian & Instructor Notified"
-        for role in ("Parent", "Student", "Instructor"):
-            dispatch_notification(
-                recipient_role=role,
-                student_id=seat["student_id"],
-                student_name=seat["name"],
-                category="Focus Alert",
-                severity="Critical",
-                title=f"Marked Absent (Focus Limit) — {seat['name']}",
-                message=f"{seat['name']} reached {seat['strikes']}/{max_s} window-exit alerts during {subj} and was marked Absent.",
-                channels="Portal · Email · SMS",
-            )
-    else:
-        seat["focus_state"] = "Focus Alert"
-        action = f"Focus Flag Recorded ({seat['strikes']}/{max_s})"
-
-    log_proctor_incident(
-        session_id=st.session_state.session_id,
-        student_id=seat["student_id"],
-        student_name=seat["name"],
-        event_type=reason,
-        duration_sec=round(random.uniform(6.0, 20.0), 1),
-        strike_count=seat["strikes"],
-        max_strikes=max_s,
-        action_taken=action,
-    )
-    return seat["name"], action
-
-
-def finalize_and_auto_generate_pdf():
-    room = get_active_room()
-    room_code = room["lobby_code"] if room else "GENERAL"
-    subj_name = room["active_subject"] if room else (st.session_state.session_subject or "Classroom Session")
-    sess_id = st.session_state.session_id
-    now_t = datetime.now().strftime("%H:%M:%S")
-
-    seats = list(st.session_state.live_seats.values())
-    for seat in seats:
-        log_attendance(
-            session_id=sess_id,
-            student_id=seat["student_id"],
-            name=seat["name"],
-            first_seen=now_t,
-            last_seen=now_t,
-            ratio=seat["presence"],
-            status="Present" if "Present" in seat["status"] else seat["status"],
-        )
-
-    df_att, df_eng, df_sug = get_session_data(sess_id)
-    df_proctor = get_proctor_incidents(sess_id)
-    agent = TeachingAdvisorAgent()
-    md_text, pdf_bytes = agent.generate_executive_report(
-        session_id=sess_id,
-        df_att=df_att,
-        df_eng=df_eng,
-        df_sug=df_sug,
-        df_proctor=df_proctor,
-        lobby_code=room_code,
-        subject_name=subj_name,
-    )
-
-    b64_pdf = base64.b64encode(pdf_bytes).decode("ascii")
-    avg_eng = float(df_eng["total_engagement"].mean()) if not df_eng.empty else st.session_state.latest_metrics["total_engagement"]
-    present_cnt = sum(1 for s in seats if "Present" in s["status"])
-
-    save_session_report(
-        session_id=sess_id,
-        lobby_code=room_code,
-        subject_name=subj_name,
-        avg_engagement=avg_eng,
-        present_count=present_cnt,
-        total_count=len(seats),
-        proctor_violations=len(df_proctor),
-        pdf_b64=b64_pdf,
-    )
-
-    filename = f"AttendAI_Report_{sess_id}.pdf"
-    st.session_state.auto_pdf_payload = (filename, b64_pdf)
-    st.session_state.last_generated_pdf = (filename, pdf_bytes, md_text)
-    st.session_state.stream_playing = False
-    st.session_state.session_remaining_sec = DURATION_OPTIONS[st.session_state.class_duration_label] * 60
-    st.session_state.session_id = datetime.now().strftime("SESS_%Y%m%d_%H%M%S")
-
-
-def auto_tick_session():
+def auto_tick_timer() -> None:
     step_sec = 4 if st.session_state.stream_speed == "2x" else 2
     st.session_state.session_remaining_sec = max(0, st.session_state.session_remaining_sec - step_sec)
-    if st.session_state.sim_gaze > 0 or st.session_state.sim_move > 0 or st.session_state.sim_audio > 0:
-        g = float(np.clip(st.session_state.sim_gaze + random.uniform(-2.5, 2.5), 15, 100))
-        m = float(np.clip(st.session_state.sim_move + random.uniform(-2.0, 2.0), 15, 100))
-        a = float(np.clip(st.session_state.sim_audio + random.uniform(-3.0, 3.0), 5, 100))
-        st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = int(g), int(m), int(a)
-        push_telemetry_step(g, m, a, trigger_ai=False)
     if st.session_state.session_remaining_sec <= 0:
-        finalize_and_auto_generate_pdf()
+        finalize_real_session_and_export_pdf(active_room, DURATION_OPTIONS[st.session_state.class_duration_label])
 
 
-def build_trend_chart(history: list) -> go.Figure:
+def build_demo_trend_chart(history: list) -> go.Figure:
     df_h = pd.DataFrame(history)
     fig = go.Figure()
     styles = [
-        ("Overall", "#000000", 3.0, "solid"),
-        ("Visual Attention", "#52525B", 1.8, "dash"),
-        ("Class Discussion", ACCENT, 1.8, "dot"),
+        ("Combined Attention (SIMULATED)", "#0F172A", 2.8, "solid"),
+        ("Facing-Front Ratio (SIMULATED)", "#4F46E5", 1.8, "dash"),
+        ("Head Alignment (SIMULATED)", ACCENT, 1.8, "dot"),
     ]
     for name, col, w, dash in styles:
         if name in df_h.columns:
@@ -367,33 +203,23 @@ def build_trend_chart(history: list) -> go.Figure:
                     name=name,
                     line=dict(color=col, width=w, dash=dash, shape="spline"),
                     marker=dict(size=5, color=col),
-                    hovertemplate=f"<b>{name}</b>: %{{y:.1f}}%<extra></extra>",
                 )
             )
-    fig.add_hline(
-        y=60,
-        line_dash="dot",
-        line_color=ACCENT,
-        annotation_text="Minimum Attention Line (60%)",
-        annotation_position="bottom right",
-        annotation_font=dict(color=ACCENT, size=11),
-    )
     fig.update_layout(
-        height=265,
+        height=230,
         margin=dict(l=8, r=8, t=12, b=8),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
-        font=dict(color="#000000", family="Inter", size=11),
+        font=dict(color="#0F172A", family="Inter", size=11),
         hovermode="x unified",
         hoverlabel=PLOTLY_HOVER,
-        yaxis=dict(range=[0, 105], title="Score (%)", gridcolor="#E4E4E7", zeroline=False),
-        xaxis=dict(title="", gridcolor="#F4F4F5"),
+        yaxis=dict(range=[0, 105], title="Score (%)", gridcolor="#E2E8F0", zeroline=False),
+        xaxis=dict(title="", gridcolor="#F1F5F9"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
 
 
-sync_live_seats()
 lobbies = get_lobbies()
 all_students = load_all_students()
 active_room = get_active_room()
@@ -403,12 +229,18 @@ with st.sidebar:
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">'
         f'<div class="brand-mark" style="width:28px;height:28px;">{SVG_ICONS["brand"]}</div>'
-        f'<span style="font-size:1.05rem;font-weight:800;color:#000000;">AttendAI</span>'
+        f'<span style="font-size:1.05rem;font-weight:800;color:#0F172A;">AttendAI</span>'
         f"</div>",
         unsafe_allow_html=True,
     )
     st.caption(st.session_state.org_name)
     st.divider()
+
+    st.session_state.demo_mode = st.toggle(
+        "Demo Mode (Simulated Data)",
+        value=bool(st.session_state.demo_mode),
+        help="Off by default. Turn on only to demonstrate flows without a live camera.",
+    )
 
     st.markdown("**View As**")
     st.session_state.user_role = st.selectbox(
@@ -448,36 +280,27 @@ with st.sidebar:
     if new_dur != st.session_state.class_duration_label:
         st.session_state.class_duration_label = new_dur
         st.session_state.session_remaining_sec = DURATION_OPTIONS[new_dur] * 60
+        st.session_state.snapshot_schedule = []
         st.rerun()
 
-    st.divider()
-
-    # Collapsible Live Signal Controls Drawer
-    with st.expander("Live Signal Controls", expanded=False):
-        st.caption("Adjust classroom signals to record an engagement snapshot.")
-        g_val = st.slider("Visual Attention (%)", 0, 100, int(st.session_state.sim_gaze))
-        m_val = st.slider("Posture & Activity (%)", 0, 100, int(st.session_state.sim_move))
-        a_val = st.slider("Class Discussion (%)", 0, 100, int(st.session_state.sim_audio))
-        st.session_state.sim_gaze, st.session_state.sim_move, st.session_state.sim_audio = g_val, m_val, a_val
-
-        if st.button("Record Snapshot", icon=":material/add_chart:", type="primary", width="stretch"):
-            push_telemetry_step(g_val, m_val, a_val, trigger_ai=False)
-            st.rerun()
-
-        if all_students:
-            target_opts = {f"{s['name']} ({s['student_id']})": s["student_id"] for s in all_students}
-            flag_pick = st.selectbox("Flag Student Focus Alert", list(target_opts.keys()))
-            if st.button("Log Focus Alert", icon=":material/flag:", width="stretch"):
-                sname, act = record_focus_flag(target_opts[flag_pick])
-                if sname:
-                    st.toast(f"{sname}: {act}")
+    # Sliders exist strictly inside Demo Mode only (zero sliders in Live Mode)
+    if st.session_state.demo_mode:
+        st.divider()
+        with st.expander("Demo Controls (Simulated)", expanded=True):
+            st.caption("Simulated visual sliders only (Audio: Not measured; does NOT fake attendance).")
+            g_val = st.slider("Facing-Front Ratio (%)", 0, 100, int(st.session_state.sim_gaze))
+            m_val = st.slider("Head Alignment (%)", 0, 100, int(st.session_state.sim_move))
+            st.session_state.sim_gaze, st.session_state.sim_move = g_val, m_val
+            if st.button("Record Simulated Trend Point", icon=":material/add_chart:", type="primary", use_container_width=True):
+                record_demo_engagement_step(g_val, m_val)
                 st.rerun()
 
+    st.divider()
     st.markdown("**Flag / Highlight Color**")
     chosen_color = st.color_picker(
         "Pick Flag Color",
         value=st.session_state.accent_color,
-        help="Choose the 3rd color used for warnings, flags, and highlights.",
+        help="Color used for warnings, flags, and highlights.",
     )
     if chosen_color != st.session_state.accent_color:
         st.session_state.accent_color = chosen_color
@@ -489,13 +312,14 @@ if st.session_state.auto_pdf_payload:
     components.html(render_auto_pdf_download_script(fname, b64_data), height=0)
     st.session_state.auto_pdf_payload = None
 
-# Top Header
+# Top Header & Demo Mode Banner
 role_key = {"Instructor / Mentor": "Instructor", "Student": "Student", "Parent / Guardian": "Parent"}[st.session_state.user_role]
 unread_df = get_notifications(recipient_role=role_key)
 unread_cnt = int((unread_df["acknowledged"] == 0).sum()) if not unread_df.empty else 0
 room_tag = active_room["lobby_code"] if active_room else "No Room Selected"
 status_tag = "Live" if st.session_state.stream_playing else "Standby"
 st.markdown(render_top_nav_html(st.session_state.org_name, room_tag, st.session_state.user_role, status_tag, unread_cnt), unsafe_allow_html=True)
+render_demo_mode_banner()
 
 if st.session_state.last_generated_pdf:
     pdf_name, pdf_raw, _ = st.session_state.last_generated_pdf
@@ -503,15 +327,27 @@ if st.session_state.last_generated_pdf:
     with bl:
         st.info(f"Session report **{pdf_name}** was automatically generated and saved under Roster & Reports.")
     with br:
-        st.download_button("Download PDF", data=pdf_raw, file_name=pdf_name, mime="application/pdf", icon=":material/picture_as_pdf:", type="primary", width="stretch")
+        st.download_button("Download PDF", data=pdf_raw, file_name=pdf_name, mime="application/pdf", icon=":material/picture_as_pdf:", type="primary", use_container_width=True)
 
 
 # ==============================================================================
-# TAB 1: LIVE SESSION
+# TAB 1: LIVE SESSION (PHASE 1 REAL ATTENDANCE + PHASE 2 HEAD-POSE & FOCUS SYNC)
 # ==============================================================================
-def _render_live_session():
-    if st.session_state.drop_alert:
-        st.markdown(f'<div class="flag-banner">{SVG_ICONS["flag"]}<span>{st.session_state.drop_alert}</span></div>', unsafe_allow_html=True)
+def _render_live_session() -> None:
+    # Student Mode gets the dedicated bidirectional Window Focus Monitor join flow
+    if st.session_state.user_role == "Student":
+        render_student_live_focus_view(active_room, ACCENT)
+        return
+
+    tracker = get_or_build_tracker()
+    summaries = tracker.get_student_summaries()
+    total_students = len(summaries)
+    present_cnt = sum(1 for s in summaries if s.state == STATE_PRESENT)
+    review_cnt = sum(1 for s in summaries if s.state == STATE_NEEDS_REVIEW)
+
+    df_pose = get_attention_snapshots(st.session_state.session_id)
+    measured_pose = df_pose[df_pose["facing_front_ratio"].notna()] if not df_pose.empty else pd.DataFrame()
+    latest_pose = measured_pose.iloc[-1] if not measured_pose.empty else None
 
     with st.container(border=True):
         c1, c2, c3, c4, c5 = st.columns([1.85, 0.95, 0.85, 0.7, 1.25], vertical_alignment="center")
@@ -528,106 +364,110 @@ def _render_live_session():
         with c2:
             st.markdown(
                 f'<div style="text-align:center;">'
-                f'<div style="font-size:0.70rem;font-weight:600;color:#3F3F46;text-transform:uppercase;">{st.session_state.class_duration_label}</div>'
-                f'<div class="timer-val" style="font-size:1.55rem;font-weight:800;color:#000000;">{mins:02d}:{secs:02d}</div>'
+                f'<div style="font-size:0.70rem;font-weight:600;color:#64748B;text-transform:uppercase;">{st.session_state.class_duration_label}</div>'
+                f'<div class="timer-val" style="font-size:1.55rem;font-weight:800;color:#0F172A;">{mins:02d}:{secs:02d}</div>'
                 f"</div>",
                 unsafe_allow_html=True,
             )
         with c3:
             if st.session_state.stream_playing:
-                if st.button("Pause", icon=":material/pause:", width="stretch"):
+                if st.button("Pause", icon=":material/pause:", use_container_width=True):
                     st.session_state.stream_playing = False
                     st.rerun()
             else:
-                if st.button("Start Class", icon=":material/play_arrow:", type="primary", width="stretch"):
+                if st.button("Start Class", icon=":material/play_arrow:", type="primary", use_container_width=True):
                     st.session_state.stream_playing = True
                     st.rerun()
         with c4:
             st.session_state.stream_speed = st.selectbox("Speed", ["1x", "2x"], index=0 if st.session_state.stream_speed == "1x" else 1, label_visibility="collapsed")
         with c5:
-            if st.button("End & Auto-PDF", icon=":material/picture_as_pdf:", width="stretch"):
-                finalize_and_auto_generate_pdf()
+            if st.button("End & Auto-PDF", icon=":material/picture_as_pdf:", use_container_width=True):
+                finalize_real_session_and_export_pdf(active_room, DURATION_OPTIONS[st.session_state.class_duration_label])
                 st.rerun()
 
-    m = st.session_state.latest_metrics
-    has_data = len(st.session_state.engagement_history) > 0
+    # Four Honest Live KPIs (Renamed to exactly what is measured; Audio explicitly Not measured)
+    present_pct = round((present_cnt / total_students) * 100.0, 1) if total_students else 0.0
     k1, k2, k3, k4 = st.columns(4)
-    specs = [
-        ("Overall Engagement", m["total_engagement"], f"Weights: {st.session_state.w_gaze}/{st.session_state.w_move}/{st.session_state.w_audio}"),
-        ("Visual Attention", m["gaze_score"], "Screen & board focus"),
-        ("Posture & Activity", m["movement_score"], "Active classroom alertness"),
-        ("Class Discussion", m["audio_score"], "Q&A & vocal interaction"),
-    ]
-    for col, (lbl, val, sub) in zip([k1, k2, k3, k4], specs):
-        if not has_data:
-            col.markdown(render_kpi_html(lbl, 0.0, "Awaiting live session data", flagged=False, tag="Standby"), unsafe_allow_html=True)
-        else:
-            is_low = val < 60.0
-            tag = "Low — Flagged" if is_low else "On Track"
-            col.markdown(render_kpi_html(lbl, val, sub, flagged=is_low, tag=tag), unsafe_allow_html=True)
+    k1.markdown(
+        render_honest_kpi_card(
+            "Verified Present",
+            f"{present_pct:.1f}%",
+            f"{present_cnt}/{total_students} students ({review_cnt} review)",
+            flagged=(review_cnt > 0),
+            tag="Real Tracker" if tracker.total_snapshots else "Standby",
+        ),
+        unsafe_allow_html=True,
+    )
+    if latest_pose is not None:
+        ff_val = float(latest_pose["facing_front_ratio"])
+        al_val = float(latest_pose["head_alignment_score"])
+        k2.markdown(
+            render_honest_kpi_card(
+                "Facing-Front Ratio",
+                f"{ff_val:.1f}%",
+                f"{int(latest_pose['faces_facing_front'])}/{int(latest_pose['faces_evaluated'])} faces front-aligned",
+                flagged=(ff_val < 60.0),
+                tag="Flagged" if ff_val < 60.0 else "Measured",
+            ),
+            unsafe_allow_html=True,
+        )
+        k3.markdown(
+            render_honest_kpi_card(
+                "Head Alignment",
+                f"{al_val:.1f}%",
+                f"Avg |yaw| {latest_pose['mean_abs_yaw_deg']}° · |pitch| {latest_pose['mean_abs_pitch_deg']}°",
+                flagged=(al_val < 60.0),
+                tag="Flagged" if al_val < 60.0 else "Measured",
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        k2.markdown(render_honest_kpi_card("Facing-Front Ratio", "Not measured", "Capture a snapshot to compute", tag="Standby"), unsafe_allow_html=True)
+        k3.markdown(render_honest_kpi_card("Head Alignment", "Not measured", "Derived from 5-pt facial keypoints", tag="Standby"), unsafe_allow_html=True)
+
+    k4.markdown(
+        render_honest_kpi_card(
+            "Audio Activity",
+            "Not measured",
+            "No live mic capture · visual weights renormalized",
+            flagged=False,
+            tag="Unmeasured",
+        ),
+        unsafe_allow_html=True,
+    )
     st.write("")
 
-    col_l, col_r = st.columns([1.32, 1], gap="medium")
+    col_l, col_r = st.columns([1.35, 1], gap="medium")
 
     with col_l:
-        with st.container(border=True):
-            st.markdown('<p class="sec-title">Engagement Timeline</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Open <strong>Live Signal Controls</strong> in the sidebar to record metrics or click <strong>Start Class</strong> above.</p>', unsafe_allow_html=True)
-            if st.session_state.engagement_history:
-                st.plotly_chart(build_trend_chart(st.session_state.engagement_history), width="stretch", config=PLOTLY_CFG, theme=None)
-            else:
-                st.markdown(
-                    '<div class="empty-box"><h4>No Session Telemetry Yet</h4>'
-                    '<p>Open <strong>Live Signal Controls</strong> in the left sidebar and click <strong>Record Snapshot</strong> to plot live classroom engagement.</p></div>',
-                    unsafe_allow_html=True,
-                )
-
-        with st.container(border=True):
-            st.markdown('<p class="sec-title">Live Classroom Roster</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Real-time presence status and window-focus alerts for enrolled students.</p>', unsafe_allow_html=True)
-            seats = list(st.session_state.live_seats.values())
-            if not seats:
-                st.markdown(
-                    '<div class="empty-box"><h4>No Students Enrolled</h4>'
-                    '<p>Add students in the <strong>Roster &amp; Reports</strong> tab so they appear here during live sessions.</p></div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                g1, g2 = st.columns(2)
-                for idx, seat in enumerate(seats):
-                    tgt = g1 if idx % 2 == 0 else g2
-                    tgt.markdown(
-                        render_seat_card_html(
-                            seat["student_id"],
-                            seat["name"],
-                            seat["presence"],
-                            seat["focus_state"],
-                            seat["strikes"],
-                            int(st.session_state.max_strikes),
-                            seat["status"],
-                            ACCENT,
-                        ),
-                        unsafe_allow_html=True,
-                    )
+        render_live_face_capture_section(DURATION_OPTIONS[st.session_state.class_duration_label], active_room=active_room)
 
     with col_r:
+        render_real_attention_section(ACCENT)
+
+        if st.session_state.demo_mode and st.session_state.engagement_history:
+            with st.container(border=True):
+                st.markdown('<p class="sec-title">Simulated Trend Chart (Demo Mode)</p>', unsafe_allow_html=True)
+                st.plotly_chart(build_demo_trend_chart(st.session_state.engagement_history), use_container_width=True, config=PLOTLY_CFG, theme=None)
+
+        render_instructor_focus_feed(active_room)
+
         with st.container(border=True):
             h1, h2 = st.columns([1.2, 1], vertical_alignment="center")
             with h1:
                 st.markdown('<p class="sec-title" style="margin:0;">Teaching Assistant</p>', unsafe_allow_html=True)
             with h2:
-                if st.button("Generate Tip", icon=":material/auto_awesome:", type="primary", width="stretch"):
+                if st.button("Generate Tip", icon=":material/auto_awesome:", type="primary", use_container_width=True):
                     agent = TeachingAdvisorAgent()
-                    seats = list(st.session_state.live_seats.values())
                     adv = agent.generate_advice(
                         st.session_state.session_id,
                         st.session_state.latest_metrics,
-                        sum(1 for s in seats if "Present" in s["status"]),
-                        max(1, len(seats)),
+                        present_cnt,
+                        max(1, total_students),
                     )
                     st.session_state.suggestion_feed.insert(0, {"category": adv["category"], "time": datetime.now().strftime("%H:%M"), "text": adv["text"]})
                     st.rerun(scope="fragment")
-            st.markdown('<p class="sec-sub" style="margin-top:4px;">Ask for pacing suggestions or engagement activities based on live metrics.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub" style="margin-top:4px;">Ask for pacing suggestions or classroom activities.</p>', unsafe_allow_html=True)
 
             if not st.session_state.suggestion_feed:
                 st.caption("No suggestions generated yet. Click Generate Tip or ask a question below.")
@@ -649,44 +489,29 @@ def _render_live_session():
                         label_visibility="collapsed",
                     )
                 with q2:
-                    q_send = st.form_submit_button("Ask", icon=":material/send:", width="stretch")
+                    q_send = st.form_submit_button("Ask", icon=":material/send:", use_container_width=True)
                 if q_send and q_text.strip():
                     agent = TeachingAdvisorAgent()
-                    seats = list(st.session_state.live_seats.values())
                     adv = agent.generate_advice(
                         st.session_state.session_id,
                         st.session_state.latest_metrics,
-                        sum(1 for s in seats if "Present" in s["status"]),
-                        max(1, len(seats)),
+                        present_cnt,
+                        max(1, total_students),
                         custom_question=q_text.strip(),
                     )
                     st.session_state.suggestion_feed.insert(0, {"category": adv["category"], "time": datetime.now().strftime("%H:%M"), "text": adv["text"]})
                     st.rerun(scope="fragment")
 
-        with st.container(border=True):
-            st.markdown('<p class="sec-title">Window Focus Integrity</p>', unsafe_allow_html=True)
-            st.markdown(f'<p class="sec-sub">Automatically marks a student Absent after <strong>{st.session_state.max_strikes}</strong> tab switches or window exits.</p>', unsafe_allow_html=True)
-            components.html(render_focus_guard_widget(int(st.session_state.max_strikes), ACCENT), height=145)
-            df_inc = get_proctor_incidents()
-            if not df_inc.empty:
-                st.dataframe(
-                    df_inc[["timestamp", "student_name", "strike_count", "action_taken"]].head(4).rename(
-                        columns={"timestamp": "Time", "student_name": "Student", "strike_count": "Flags", "action_taken": "Action"}
-                    ),
-                    width="stretch",
-                    hide_index=True,
-                )
-
 
 @st.fragment(run_every=2)
-def render_live_streaming():
+def render_live_streaming() -> None:
     if st.session_state.stream_playing:
-        auto_tick_session()
+        auto_tick_timer()
     _render_live_session()
 
 
 @st.fragment
-def render_live_paused():
+def render_live_paused() -> None:
     _render_live_session()
 
 
@@ -694,20 +519,20 @@ def render_live_paused():
 # TAB 2: COURSE ROOMS
 # ==============================================================================
 @st.fragment
-def render_course_rooms():
+def render_course_rooms() -> None:
     t1, t2, t3 = st.columns([2.1, 0.95, 0.95], vertical_alignment="center")
     with t1:
         st.markdown('<p class="sec-title" style="font-size:1.05rem;">Course Rooms</p>', unsafe_allow_html=True)
         st.markdown('<p class="sec-sub">Create a shared cohort room where multiple subject teachers track attendance and share assignments together.</p>', unsafe_allow_html=True)
 
     with t2:
-        with st.popover("New Room", icon=":material/add:", width="stretch"):
+        with st.popover("New Room", icon=":material/add:", use_container_width=True):
             c_code = st.text_input("Room Code", placeholder="Example: ECE-301")
             c_name = st.text_input("Room Name", placeholder="Example: B.Tech ECE Semester V")
             c_cohort = st.text_input("Section / Batch", placeholder="Example: Section A (2026-27)")
             c_host = st.text_input("Lead Instructor", placeholder="Example: Dr. Vikram Deshmukh")
             c_sub = st.text_input("Primary Subject", placeholder="Example: Digital Signal Processing")
-            if st.button("Create Room", type="primary", width="stretch"):
+            if st.button("Create Room", type="primary", use_container_width=True):
                 if c_code.strip() and c_name.strip() and c_host.strip() and c_sub.strip():
                     if create_lobby(c_code, c_name, c_cohort or "General Batch", c_host, c_sub):
                         st.session_state.active_lobby = c_code.strip().upper()
@@ -719,11 +544,11 @@ def render_course_rooms():
                     st.error("Please fill in Room Code, Room Name, Lead Instructor, and Primary Subject.")
 
     with t3:
-        with st.popover("Join Room", icon=":material/login:", width="stretch"):
+        with st.popover("Join Room", icon=":material/login:", use_container_width=True):
             j_code = st.text_input("Room Code to Join", placeholder="Example: ECE-301")
             j_teacher = st.text_input("Your Name", placeholder="Example: Prof. Neha Kulkarni")
             j_sub = st.text_input("Your Subject", placeholder="Example: Embedded Systems")
-            if st.button("Join as Instructor", type="primary", width="stretch"):
+            if st.button("Join as Instructor", type="primary", use_container_width=True):
                 if j_code.strip() and j_teacher.strip() and j_sub.strip():
                     if join_lobby_teacher(j_code, j_teacher, j_sub):
                         st.session_state.active_lobby = j_code.strip().upper()
@@ -763,7 +588,7 @@ def render_course_rooms():
                     with fc1:
                         st.markdown(render_faculty_card_html(t["teacher_name"], t["subject"], False), unsafe_allow_html=True)
                     with fc2:
-                        if st.button("Host Next", key=f"host_{t['id']}", width="stretch"):
+                        if st.button("Host Next", key=f"host_{t['id']}", use_container_width=True):
                             set_lobby_active_host(room["lobby_code"], t["teacher_name"], t["subject"])
                             st.toast(f"{t['teacher_name']} is now hosting {t['subject']}.")
                             st.rerun()
@@ -776,12 +601,12 @@ def render_course_rooms():
                 st.markdown('<p class="sec-sub">Assignments and deadlines shared across all subjects in this room.</p>', unsafe_allow_html=True)
             with ah2:
                 if st.session_state.user_role == "Instructor / Mentor":
-                    with st.popover("New Assignment", icon=":material/assignment_add:", width="stretch"):
+                    with st.popover("New Assignment", icon=":material/assignment_add:", use_container_width=True):
                         a_sub = st.text_input("Subject", placeholder=f"Example: {room['active_subject']}")
                         a_teacher = st.text_input("Instructor", placeholder=f"Example: {room['active_host']}")
                         a_title = st.text_input("Assignment Title", placeholder="Example: Lab 4 — FIR Filter Design")
                         a_due = st.date_input("Due Date", value=datetime.now() + timedelta(days=7))
-                        if st.button("Publish Assignment", type="primary", width="stretch"):
+                        if st.button("Publish Assignment", type="primary", use_container_width=True):
                             if a_title.strip():
                                 add_lobby_assignment(
                                     room["lobby_code"],
@@ -810,14 +635,14 @@ def render_course_rooms():
                     "Due Date": df_asg["due_date"],
                     "Submitted": df_asg.apply(lambda r: f"{r['submitted_count']}/{r['total_students']}", axis=1),
                 })
-                st.dataframe(df_disp, width="stretch", hide_index=True)
+                st.dataframe(df_disp, use_container_width=True, hide_index=True)
 
 
 # ==============================================================================
 # TAB 3: ATTENDANCE & GRADES
 # ==============================================================================
 @st.fragment
-def render_attendance_and_grades():
+def render_attendance_and_grades() -> None:
     min_req = float(st.session_state.min_attendance_pct)
     slabs = get_grade_slabs()
     students = load_all_students()
@@ -825,7 +650,7 @@ def render_attendance_and_grades():
     if st.session_state.user_role == "Instructor / Mentor":
         act1, act2, act3 = st.columns([1.2, 1.2, 1.6], vertical_alignment="center")
         with act1:
-            with st.popover("Record Subject Attendance", icon=":material/add_box:", width="stretch"):
+            with st.popover("Record Subject Attendance", icon=":material/add_box:", use_container_width=True):
                 if not students:
                     st.warning("Enroll at least one student in Roster & Reports first.")
                 else:
@@ -843,7 +668,7 @@ def render_attendance_and_grades():
                         pr_att = st.number_input("Practical Attended", min_value=0, max_value=200, value=0)
                     with c_pr2:
                         pr_tot = st.number_input("Practical Total", min_value=0, max_value=200, value=0)
-                    if st.button("Save Subject Record", type="primary", width="stretch"):
+                    if st.button("Save Subject Record", type="primary", use_container_width=True):
                         if sc.strip() and sn.strip():
                             add_or_update_subject_record(
                                 sel_stu["student_id"],
@@ -862,7 +687,7 @@ def render_attendance_and_grades():
                             st.error("Enter both Subject Code and Subject Name.")
 
         with act2:
-            with st.popover("Log Daily Class Entry", icon=":material/today:", width="stretch"):
+            with st.popover("Log Daily Class Entry", icon=":material/today:", use_container_width=True):
                 if not students:
                     st.warning("Enroll at least one student in Roster & Reports first.")
                 else:
@@ -872,8 +697,8 @@ def render_attendance_and_grades():
                     d_type = st.radio("Session Type", ["Theory", "Practical"], horizontal=True)
                     d_teacher = st.text_input("Instructor Name", placeholder="Example: Prof. Neha Kulkarni")
                     d_slot = st.text_input("Time Slot", placeholder="Example: 10:30 - 11:15")
-                    d_status = st.selectbox("Status", ["Present", "Absent", "Absent (Focus Limit)"])
-                    if st.button("Add to Daily Summary", type="primary", width="stretch"):
+                    d_status = st.selectbox("Status", ["Present", "Absent", "Needs Review"])
+                    if st.button("Add to Daily Summary", type="primary", use_container_width=True):
                         if d_subj.strip() and d_teacher.strip() and d_slot.strip():
                             add_daily_log(sel_d["student_id"], sel_d["name"], d_subj, d_type, d_teacher, d_slot, d_status)
                             st.toast("Added to today's summary.")
@@ -887,7 +712,7 @@ def render_attendance_and_grades():
     if cum_df.empty:
         st.markdown(
             '<div class="empty-box"><h4>No Subject Attendance Records Yet</h4>'
-            '<p>Enroll students in <strong>Roster &amp; Reports</strong>, then click <strong>Record Subject Attendance</strong> above to calculate separate Theory &amp; Practical grades and cumulative percentages.</p></div>',
+            '<p>Enroll students in <strong>Roster &amp; Reports</strong>, then click <strong>Record Subject Attendance</strong> above to calculate Theory &amp; Practical grades.</p></div>',
             unsafe_allow_html=True,
         )
     else:
@@ -908,7 +733,7 @@ def render_attendance_and_grades():
                 st.markdown(
                     f'<div class="flag-banner">{SVG_ICONS["flag"]}<span>'
                     f'Below {int(min_req)}% Attendance Flag — {row_s["student_name"]} is at {row_s["cumulative_pct"]}%. '
-                    f'Warnings dispatched to Student &amp; Guardian portals ({row_s["recovery"]} needed).'
+                    f'Warnings logged for Student &amp; Guardian portals ({row_s["recovery"]} needed).'
                     f"</span></div>",
                     unsafe_allow_html=True,
                 )
@@ -919,7 +744,7 @@ def render_attendance_and_grades():
             m3.markdown(render_kpi_html("Practical Labs", row_s["practical_pct"], "All labs combined", flagged=(row_s["practical_pct"] < min_req), tag="Flagged" if row_s["practical_pct"] < min_req else "On Track"), unsafe_allow_html=True)
             with m4:
                 card_cls = "kpi-card kpi-card-flagged" if below_min else "kpi-card"
-                tag_cls = "kpi-tag kpi-tag-flag" if below_min else "kpi-tag"
+                tag_cls = "kpi-tag kpi-tag-flag" if below_min else "kpi-tag kpi-tag-ok"
                 st.markdown(
                     f'<div class="{card_cls}"><div class="kpi-top"><span class="kpi-label">Internal Grade</span><span class="{tag_cls}">{row_s["risk_tier"]}</span></div>'
                     f'<div style="font-size:1.35rem;font-weight:800;color:{"var(--flag)" if below_min else "var(--ink)"};">{row_s["internal_grade"]}</div>'
@@ -952,7 +777,7 @@ def render_attendance_and_grades():
 
             with st.container(border=True):
                 st.markdown(f'<p class="sec-title">Subject-Wise Breakdown — {row_s["student_name"]}</p>', unsafe_allow_html=True)
-                st.dataframe(pd.DataFrame(calc_rows), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(calc_rows), use_container_width=True, hide_index=True)
 
     d1, d2 = st.columns([1.2, 1], gap="medium")
     with d1:
@@ -970,7 +795,7 @@ def render_attendance_and_grades():
                         file_name=f"AttendAI_Daily_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv",
                         icon=":material/download:",
-                        width="stretch",
+                        use_container_width=True,
                     )
             if df_daily.empty:
                 st.caption("No daily attendance entries logged today.")
@@ -979,7 +804,7 @@ def render_attendance_and_grades():
                     df_daily[["time_slot", "student_name", "subject_name", "session_type", "status", "proctor_strikes"]].rename(
                         columns={"time_slot": "Time", "student_name": "Student", "subject_name": "Subject", "session_type": "Type", "status": "Status", "proctor_strikes": "Flags"}
                     ),
-                    width="stretch",
+                    use_container_width=True,
                     hide_index=True,
                 )
 
@@ -998,8 +823,8 @@ def render_attendance_and_grades():
                     f_type = st.radio("Type", ["Theory", "Practical"], horizontal=True, key="flag_type")
                     f_route = st.radio("Send To", ["Assigned Mentor", "Subject Instructor"], horizontal=True)
                     f_recip = st.text_input("Recipient Name", placeholder="Example: Dr. Vikram Deshmukh")
-                    f_reason = st.text_area("Reason for Correction", placeholder="Example: Present in Lab Bay 2 during equipment setup; missed camera scan.")
-                    if st.button("Submit Correction Flag", icon=":material/flag:", type="primary", width="stretch"):
+                    f_reason = st.text_area("Reason for Correction", placeholder="Example: Present in Lab Bay 2 during equipment setup; missed snapshot.")
+                    if st.button("Submit Correction Flag", icon=":material/flag:", type="primary", use_container_width=True):
                         if f_subj.strip() and f_recip.strip() and f_reason.strip():
                             create_dispute_ticket(None, f_stu["student_id"], f_stu["name"], f_subj, f_type, f_route, f_recip, f_reason)
                             st.toast(f"Flag sent to {f_recip}.")
@@ -1023,11 +848,11 @@ def render_attendance_and_grades():
                     if is_pend and st.session_state.user_role == "Instructor / Mentor":
                         b1, b2 = st.columns(2)
                         with b1:
-                            if st.button("Approve & Recalculate", key=f"appr_{tk['id']}", type="primary", width="stretch"):
+                            if st.button("Approve & Recalculate", key=f"appr_{tk['id']}", type="primary", use_container_width=True):
                                 resolve_dispute_ticket(int(tk["id"]), True, "Verified by faculty; attendance updated.")
                                 st.rerun(scope="fragment")
                         with b2:
-                            if st.button("Decline", key=f"rej_{tk['id']}", width="stretch"):
+                            if st.button("Decline", key=f"rej_{tk['id']}", use_container_width=True):
                                 resolve_dispute_ticket(int(tk["id"]), False, "Attendance could not be verified.")
                                 st.rerun(scope="fragment")
 
@@ -1036,7 +861,7 @@ def render_attendance_and_grades():
 # TAB 4: GUARDIAN & STUDENT SAFETY
 # ==============================================================================
 @st.fragment
-def render_guardian_and_safety():
+def render_guardian_and_safety() -> None:
     min_req = float(st.session_state.min_attendance_pct)
     students = load_all_students()
     p_l, p_r = st.columns([1.25, 1], gap="medium")
@@ -1044,18 +869,18 @@ def render_guardian_and_safety():
     with p_l:
         with st.container(border=True):
             st.markdown('<p class="sec-title">Guardian Alerts &amp; Attendance Warnings</p>', unsafe_allow_html=True)
-            st.markdown(f'<p class="sec-sub">Automatic alerts for students below {int(min_req)}% attendance, unexpected exits, and daily digests.</p>', unsafe_allow_html=True)
+            st.markdown(f'<p class="sec-sub">In-portal alerts for students below {int(min_req)}% attendance (real Email/SMS delivery wired in Phase 4).</p>', unsafe_allow_html=True)
 
-            if st.button(f"Run Below-{int(min_req)}% Warning Audit", icon=":material/notifications_active:", width="stretch"):
+            if st.button(f"Run Below-{int(min_req)}% Warning Audit", icon=":material/notifications_active:", use_container_width=True):
                 cnt = dispatch_below_threshold_warnings(min_threshold=min_req)
-                st.toast(f"Dispatched {cnt} warning(s) to Student & Guardian portals." if cnt else "All alerts are up to date.")
+                st.toast(f"Logged {cnt} portal warning(s)." if cnt else "All alerts are up to date.")
                 st.rerun(scope="fragment")
 
             notifs = get_notifications(recipient_role="Parent" if st.session_state.user_role == "Parent / Guardian" else None)
             if notifs.empty:
                 st.markdown(
                     '<div class="empty-box"><h4>No Guardian Alerts Yet</h4>'
-                    '<p>Warnings for low attendance, focus-limit absences, and safety check-ins will appear here automatically.</p></div>',
+                    '<p>Warnings for low attendance and safety check-ins will appear here automatically.</p></div>',
                     unsafe_allow_html=True,
                 )
             else:
@@ -1065,11 +890,11 @@ def render_guardian_and_safety():
                         f'<div class="ink-card {"ink-card-flag" if is_crit else ""}">'
                         f'<div class="row-between"><span class="card-title">{nf["title"]}</span><span class="card-meta">{nf["created_at"]}</span></div>'
                         f'<div style="font-size:0.82rem;margin-top:4px;">{nf["message"]}</div>'
-                        f'<div class="card-meta">To: {nf["recipient_role"]} &middot; {nf["channels"]} &middot; <strong>{"Read" if nf["acknowledged"] else "Unread"}</strong></div></div>',
+                        f'<div class="card-meta">To: {nf["recipient_role"]} &middot; Channel: {nf["channels"]} &middot; <strong>{"Read" if nf["acknowledged"] else "Unread"}</strong></div></div>',
                         unsafe_allow_html=True,
                     )
                     if not nf["acknowledged"]:
-                        if st.button("Mark as Read", key=f"ack_{nf['id']}", width="stretch"):
+                        if st.button("Mark as Read", key=f"ack_{nf['id']}", use_container_width=True):
                             acknowledge_notification(int(nf["id"]))
                             st.rerun(scope="fragment")
 
@@ -1086,19 +911,19 @@ def render_guardian_and_safety():
                 sel_safe = {"student_id": "UNASSIGNED", "name": "Student"}
 
             sos_msg = st.text_input("Safety Check-In Note", placeholder="Example: Feeling unwell in Lab Block B; requesting mentor check-in.")
-            if st.button("Send Private Safety Alert", icon=":material/health_and_safety:", type="primary", width="stretch"):
+            if st.button("Send Private Safety Alert", icon=":material/health_and_safety:", type="primary", use_container_width=True):
                 body = sos_msg.strip() or f"{sel_safe['name']} requested a private safety check-in."
                 for r_role in ("Instructor", "Parent"):
-                    dispatch_notification(r_role, sel_safe["student_id"], sel_safe["name"], "Student Safety", "Critical", f"Safety Check-In — {sel_safe['name']}", body, "Mentor Desk · SMS")
-                st.success("Private safety alert sent to Mentor and Guardian.")
+                    dispatch_notification(r_role, sel_safe["student_id"], sel_safe["name"], "Student Safety", "Critical", f"Safety Check-In — {sel_safe['name']}", body, "Portal")
+                st.success("Private safety alert logged for Mentor and Guardian portals.")
                 st.rerun(scope="fragment")
 
             st.divider()
             st.markdown("**Guardian Note to Mentor**")
             with st.form("guardian_msg_form", clear_on_submit=True, border=False):
                 g_note = st.text_input("Message", placeholder="Example: My ward has a medical appointment during Period 3 today.")
-                if st.form_submit_button("Send to Mentor", icon=":material/mail:", width="stretch") and g_note.strip():
-                    dispatch_notification("Instructor", sel_safe["student_id"], sel_safe["name"], "Guardian Note", "Info", f"Note from Guardian ({sel_safe['name']})", g_note.strip(), "Guardian Portal")
+                if st.form_submit_button("Send to Mentor", icon=":material/mail:", use_container_width=True) and g_note.strip():
+                    dispatch_notification("Instructor", sel_safe["student_id"], sel_safe["name"], "Guardian Note", "Info", f"Note from Guardian ({sel_safe['name']})", g_note.strip(), "Portal")
                     st.toast("Message sent to Mentor.")
                     st.rerun(scope="fragment")
 
@@ -1107,83 +932,16 @@ def render_guardian_and_safety():
 # TAB 5: ROSTER & REPORTS
 # ==============================================================================
 @st.fragment
-def render_roster_and_reports():
+def render_roster_and_reports() -> None:
     st1, st2 = st.tabs([":material/group: Student Roster", ":material/description: Automated PDF Archive"])
 
     with st1:
-        r_l, r_r = st.columns([1, 1.35], gap="medium")
-        with r_l:
-            with st.container(border=True):
-                st.markdown('<p class="sec-title">Enroll Student</p>', unsafe_allow_html=True)
-                st.markdown('<p class="sec-sub">Add a student quickly or upload a portrait for local 512-D biometric verification (zero photos stored).</p>', unsafe_allow_html=True)
-                nid = st.text_input("Student ID", placeholder="Example: 0103EC231042 or S101")
-                nname = st.text_input("Full Name", placeholder="Example: Aarav Sharma")
-                mode = st.radio("Enrollment Method", ["Quick Roster Entry", "Portrait Photo (Biometric)", "Camera Snapshot"], horizontal=True)
-
-                img_file = None
-                if mode == "Portrait Photo (Biometric)":
-                    img_file = st.file_uploader("Upload Front-Facing Portrait", type=["jpg", "jpeg", "png"])
-                elif mode == "Camera Snapshot":
-                    img_file = st.camera_input("Capture Snapshot")
-
-                if st.button("Enroll Student", icon=":material/person_add:", type="primary", width="stretch"):
-                    if not nid.strip() or not nname.strip():
-                        st.error("Enter both Student ID and Full Name.")
-                    elif mode == "Quick Roster Entry":
-                        save_student(nid, nname, None)
-                        sync_live_seats()
-                        st.success(f"Enrolled {nname.strip()} ({nid.strip()}).")
-                        st.rerun()
-                    else:
-                        if img_file is None:
-                            st.error("Upload a photo or switch to Quick Roster Entry.")
-                        else:
-                            arr = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
-                            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                            if img is not None:
-                                fapp = get_face_analyzer()
-                                faces = fapp.get(img)
-                                if len(faces) == 1:
-                                    emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
-                                    save_student(nid, nname, emb)
-                                    sync_live_seats()
-                                    st.success(f"Enrolled {nname.strip()} with 512-D vector. Original photo discarded.")
-                                    st.rerun()
-                                else:
-                                    st.error("Ensure exactly one clear face is visible in the frame.")
-
-        with r_r:
-            with st.container(border=True):
-                st.markdown('<p class="sec-title">Enrolled Student Directory</p>', unsafe_allow_html=True)
-                roster = load_all_students()
-                if not roster:
-                    st.markdown(
-                        '<div class="empty-box"><h4>Roster Is Empty</h4>'
-                        '<p>Use the form on the left to enroll your students. No sample or placeholder students are pre-loaded.</p></div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    rdf = pd.DataFrame([
-                        {"Student ID": r["student_id"], "Full Name": r["name"], "Privacy Status": "512-D Vector · 0 Photos", "Enrolled On": r["created_at"]}
-                        for r in roster
-                    ])
-                    st.dataframe(rdf, width="stretch", hide_index=True)
-
-                    m1, m2 = st.columns([2.2, 1], vertical_alignment="center")
-                    opts = {f"{r['name']} ({r['student_id']})": r["student_id"] for r in roster}
-                    with m1:
-                        del_pick = st.selectbox("Select Student to Remove", list(opts.keys()), label_visibility="collapsed")
-                    with m2:
-                        if st.button("Remove Student", icon=":material/delete:", width="stretch"):
-                            delete_student(opts[del_pick])
-                            sync_live_seats()
-                            st.toast("Student removed.")
-                            st.rerun()
+        render_phase1_roster_enrollment()
 
     with st2:
         with st.container(border=True):
             st.markdown('<p class="sec-title">Automated Session PDF Archive</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Every completed session automatically generates and archives a downloadable PDF report.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Reports reflect real snapshot observation counts and measured head-pose ratios; Demo Mode reports are tagged SIMULATED.</p>', unsafe_allow_html=True)
             rep_df = get_session_reports()
             if rep_df.empty:
                 st.markdown(
@@ -1193,12 +951,13 @@ def render_roster_and_reports():
                 )
             else:
                 for _, rr in rep_df.head(8).iterrows():
+                    demo_tag = " **[SIMULATED]**" if int(rr.get("is_demo", 0)) == 1 else ""
                     rc1, rc2 = st.columns([3, 1], vertical_alignment="center")
                     with rc1:
                         st.markdown(
-                            f"**{rr['subject_name']}** ({rr['lobby_code']}) &middot; Engagement: **{rr['avg_engagement']}%** "
-                            f"&middot; Present: **{rr['present_count']}/{rr['total_count']}** &middot; Focus Flags: **{rr['proctor_violations']}** "
-                            f"&middot; _{rr['generated_at']}_"
+                            f"**{rr['subject_name']}**{demo_tag} ({rr['lobby_code']}) &middot; "
+                            f"Present: **{rr['present_count']}/{rr['total_count']}** &middot; "
+                            f"Focus Events: **{rr['proctor_violations']}** &middot; _{rr['generated_at']}_"
                         )
                     with rc2:
                         st.download_button(
@@ -1208,24 +967,43 @@ def render_roster_and_reports():
                             mime="application/pdf",
                             icon=":material/picture_as_pdf:",
                             key=f"dl_{rr['id']}",
-                            width="stretch",
+                            use_container_width=True,
                         )
 
 
 # ==============================================================================
-# TAB 6: SETTINGS (CUSTOMIZABLE FOR TEACHERS)
+# TAB 6: SETTINGS
 # ==============================================================================
 @st.fragment
-def render_settings_tab():
+def render_settings_tab() -> None:
     s_l, s_r = st.columns(2, gap="medium")
 
     with s_l:
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Institution &amp; Color Customization</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Three-color layout: Pure White background, Black Ink highlights, and your chosen Flag Color.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-title">Face Matching &amp; Attendance Rules (Phase 1)</p>', unsafe_allow_html=True)
+            st.session_state.cosine_threshold = st.slider("Cosine Match Threshold", 0.25, 0.80, float(st.session_state.cosine_threshold), 0.01)
+            st.session_state.ambiguity_margin = st.slider("Top-2 Ambiguity Margin", 0.02, 0.25, float(st.session_state.ambiguity_margin), 0.01)
+            st.session_state.min_det_score = st.slider("Minimum Face Detection Score", 0.30, 0.95, float(st.session_state.min_det_score), 0.05)
+            st.session_state.min_face_size_px = st.slider("Minimum Face Size (px)", 20, 120, int(st.session_state.min_face_size_px), 5)
+            st.session_state.min_observations = st.number_input("Min Snapshots Required for PRESENT (N)", 1, 10, int(st.session_state.min_observations))
+            st.session_state.min_observation_pct = st.slider("OR Min Snapshot Percentage (%)", 10, 100, int(st.session_state.min_observation_pct), 5)
+            st.session_state.scheduled_snapshot_count = st.slider("Scheduled Snapshots per Lecture", 2, 10, int(st.session_state.scheduled_snapshot_count))
 
+        with st.container(border=True):
+            st.markdown('<p class="sec-title">Head-Pose &amp; Focus Monitor Rules (Phase 2)</p>', unsafe_allow_html=True)
+            st.session_state.max_yaw_deg = st.slider("Max Front-Facing Yaw (°)", 10.0, 45.0, float(st.session_state.max_yaw_deg), 1.0)
+            st.session_state.max_pitch_deg = st.slider("Max Front-Facing Pitch (°)", 10.0, 40.0, float(st.session_state.max_pitch_deg), 1.0)
+            st.session_state.focus_review_threshold = st.slider(
+                "Window Exits Before Queuing NEEDS REVIEW (Never Auto-Absent)",
+                1,
+                10,
+                int(st.session_state.focus_review_threshold),
+            )
+
+        with st.container(border=True):
+            st.markdown('<p class="sec-title">Institution &amp; Color Customization</p>', unsafe_allow_html=True)
             org_in = st.text_input("Institution / Department Name", value=st.session_state.org_name, placeholder="Example: Department of ECE")
-            if st.button("Save Institution Name", width="stretch"):
+            if st.button("Save Institution Name", use_container_width=True):
                 if org_in.strip():
                     st.session_state.org_name = org_in.strip()
                     st.rerun()
@@ -1233,7 +1011,7 @@ def render_settings_tab():
             preset_name = st.selectbox("Quick Flag Color Preset", list(ACCENT_PRESETS.keys()))
             c_btn1, c_btn2 = st.columns(2)
             with c_btn1:
-                if st.button("Apply Preset Color", width="stretch"):
+                if st.button("Apply Preset Color", use_container_width=True):
                     st.session_state.accent_color = ACCENT_PRESETS[preset_name]
                     st.rerun()
             with c_btn2:
@@ -1242,8 +1020,9 @@ def render_settings_tab():
                     st.session_state.accent_color = custom_hex
                     st.rerun()
 
+    with s_r:
         with st.container(border=True):
-            st.markdown('<p class="sec-title">Lecture Duration &amp; Proctoring Rules</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-title">Lecture Duration &amp; Attendance Grade Slabs</p>', unsafe_allow_html=True)
             dur_choice = st.selectbox(
                 "Default Class Duration",
                 list(DURATION_OPTIONS.keys()),
@@ -1252,15 +1031,8 @@ def render_settings_tab():
             if dur_choice != st.session_state.class_duration_label:
                 st.session_state.class_duration_label = dur_choice
                 st.session_state.session_remaining_sec = DURATION_OPTIONS[dur_choice] * 60
+                st.session_state.snapshot_schedule = []
                 st.rerun()
-
-            st.session_state.max_strikes = st.slider("Tab-Switch / Window-Exit Limit (Marks Absent)", 1, 10, int(st.session_state.max_strikes))
-            st.session_state.presence_req_pct = st.slider("Sustained Presence Threshold (%)", 30, 95, int(st.session_state.presence_req_pct), 5)
-
-    with s_r:
-        with st.container(border=True):
-            st.markdown('<p class="sec-title">Attendance Warning &amp; Grade Slabs</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Configure university attendance rules and internal marks calculation.</p>', unsafe_allow_html=True)
 
             st.session_state.min_attendance_pct = st.slider("Minimum Mandatory Attendance Warning Threshold (%)", 50, 95, int(st.session_state.min_attendance_pct), 1)
             g1, g2, g3 = st.columns(3)
@@ -1271,29 +1043,20 @@ def render_settings_tab():
             with g3:
                 st.session_state.grade_max_marks = st.number_input("Max Internal Marks", 1, 20, int(st.session_state.grade_max_marks))
 
-            st.divider()
-            st.markdown("**Engagement Score Weights (%)**")
-            w1, w2, w3 = st.columns(3)
-            with w1:
-                st.session_state.w_gaze = st.number_input("Visual Weight", 0, 100, int(st.session_state.w_gaze), 5)
-            with w2:
-                st.session_state.w_move = st.number_input("Posture Weight", 0, 100, int(st.session_state.w_move), 5)
-            with w3:
-                st.session_state.w_audio = st.number_input("Discussion Weight", 0, 100, int(st.session_state.w_audio), 5)
-
         with st.container(border=True):
             st.markdown('<p class="sec-title">Workspace Data Reset</p>', unsafe_allow_html=True)
-            st.markdown('<p class="sec-sub">Clear any previously saved database records to begin with a completely empty workspace.</p>', unsafe_allow_html=True)
-            if st.button("Clear All Workspace Data", icon=":material/delete_forever:", width="stretch"):
+            st.markdown('<p class="sec-sub">Clear saved database records to begin with an empty workspace.</p>', unsafe_allow_html=True)
+            if st.button("Clear All Workspace Data", icon=":material/delete_forever:", use_container_width=True):
                 clear_all_data()
-                st.session_state.live_seats = {}
+                st.session_state.tracker = None
                 st.session_state.engagement_history = []
                 st.session_state.suggestion_feed = []
                 st.session_state.active_lobby = None
                 st.session_state.active_student_id = None
-                st.session_state.drop_alert = None
                 st.session_state.last_generated_pdf = None
-                st.toast("All records cleared. Workspace is completely empty.")
+                st.session_state.student_joined_room = ""
+                st.session_state.student_joined_id = ""
+                st.toast("All records cleared.")
                 st.rerun()
 
 
@@ -1327,3 +1090,487 @@ with tabs[4]:
 
 with tabs[5]:
     render_settings_tab()
+
+
+    from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import sqlite3
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import streamlit as st
+
+try:
+    import bcrypt as _bcrypt
+except ImportError:  # pragma: no cover
+    _bcrypt = None
+
+try:
+    from cryptography.fernet import Fernet as _Fernet, InvalidToken as _InvalidToken
+except ImportError:  # pragma: no cover
+    _Fernet = None
+    _InvalidToken = Exception
+
+DEFAULT_ORG_ID = "default_org"
+CURRENT_POLICY_VERSION = "1.0-biometric-v1"
+SANDBOX_DIR = Path("data/sandboxes")
+
+
+def get_secret_or_env(key: str, default: str = "") -> str:
+    try:
+        if key in st.secrets and st.secrets[key]:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return os.environ.get(key, default)
+
+
+def resolve_database_url() -> str:
+    """Returns DATABASE_URL from st.secrets/env (Postgres/Supabase) or local SQLite fallback."""
+    url = get_secret_or_env("DATABASE_URL", "").strip()
+    if url:
+        return url
+    db_path = Path("data/classroom.db")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{db_path.resolve().as_posix()}"
+
+
+def _sandbox_db_path(session_token: str) -> Path:
+    safe = "".join(ch for ch in session_token if ch.isalnum())[:24] or "guest"
+    SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
+    return SANDBOX_DIR / f"sandbox_{safe}.db"
+
+
+def get_scoped_sqlite_connection(
+    default_db_path: Path,
+    *,
+    authenticated: bool = False,
+    session_token: str = "guest",
+) -> sqlite3.Connection:
+    """
+    Returns an isolated per-session sandbox SQLite DB for unauthenticated visitors,
+    or the shared DB for authenticated users.
+    """
+    if not authenticated:
+        target = _sandbox_db_path(session_token)
+        is_new = not target.exists()
+        conn = sqlite3.connect(target, check_same_thread=False)
+        if is_new:
+            _init_sandbox_schema(conn)
+        return conn
+
+    default_db_path.parent.mkdir(parents=True, exist_ok=True)
+    return sqlite3.connect(default_db_path, check_same_thread=False)
+
+
+def _init_sandbox_schema(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS students (
+            student_id TEXT PRIMARY KEY, name TEXT NOT NULL, embedding TEXT,
+            biometric_enrolled INTEGER NOT NULL DEFAULT 0, org_id TEXT NOT NULL DEFAULT 'sandbox',
+            consent_given INTEGER NOT NULL DEFAULT 0, consent_version TEXT DEFAULT '',
+            consent_at TEXT DEFAULT '', created_at TEXT NOT NULL
+        )"""
+    )
+    cur.execute(
+        """INSERT OR IGNORE INTO students
+           (student_id, name, embedding, biometric_enrolled, org_id, created_at)
+           VALUES ('DEMO-S1', 'Sandbox Student One (Fake)', NULL, 0, 'sandbox', ?)""",
+        (datetime.now().strftime("%Y-%m-%d %H:%M"),),
+    )
+    conn.commit()
+
+
+# --- Fernet Embedding Encryption at Rest ---
+def _get_fernet() -> Any | None:
+    if _Fernet is None:
+        return None
+    raw_key = get_secret_or_env("EMBEDDING_ENCRYPTION_KEY", "").strip()
+    if not raw_key:
+        return None
+    try:
+        key_bytes = raw_key.encode("utf-8") if len(raw_key) == 44 else base64.urlsafe_b64encode(hashlib.sha256(raw_key.encode("utf-8")).digest())
+        return _Fernet(key_bytes)
+    except Exception:
+        return None
+
+
+def encrypt_embedding_payload(emb: np.ndarray) -> str:
+    arr = np.asarray(emb, dtype=np.float32).reshape(-1)
+    raw_json = json.dumps(arr.tolist())
+    fernet = _get_fernet()
+    if fernet is None:
+        return raw_json
+    token = fernet.encrypt(raw_json.encode("utf-8")).decode("utf-8")
+    return f"FERNET::{token}"
+
+
+def decrypt_embedding_payload(payload: str | None) -> np.ndarray | None:
+    if not payload or not str(payload).strip():
+        return None
+    text = str(payload).strip()
+    if text.startswith("FERNET::"):
+        fernet = _get_fernet()
+        if fernet is None:
+            raise RuntimeError("Encrypted embedding found, but EMBEDDING_ENCRYPTION_KEY is not configured.")
+        try:
+            raw_json = fernet.decrypt(text[len("FERNET::") :].encode("utf-8")).decode("utf-8")
+        except _InvalidToken as exc:
+            raise ValueError("Failed to decrypt student embedding: invalid key or corrupted ciphertext.") from exc
+    else:
+        raw_json = text
+    return np.array(json.loads(raw_json), dtype=np.float32)
+
+
+# --- Passwords, Users, Roles & Row-Level Query Enforcement ---
+def hash_password(password: str) -> str:
+    if not password:
+        raise ValueError("Password cannot be empty.")
+    if _bcrypt is not None:
+        return _bcrypt.hashpw(password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+    salt = os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000).hex()
+    return f"pbkdf2${salt}${digest}"
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    if not password or not password_hash:
+        return False
+    if password_hash.startswith("pbkdf2$"):
+        _, salt, expected = password_hash.split("$", 2)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000).hex()
+        return actual == expected
+    if _bcrypt is not None:
+        try:
+            return _bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+        except ValueError:
+            return False
+    return False
+
+
+def init_auth_privacy_tables(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL,
+            org_id TEXT NOT NULL DEFAULT 'default_org',
+            student_id TEXT,
+            created_at TEXT NOT NULL
+        )"""
+    )
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS guardian_student_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guardian_username TEXT NOT NULL,
+            student_id TEXT NOT NULL,
+            org_id TEXT NOT NULL DEFAULT 'default_org',
+            UNIQUE(guardian_username, student_id, org_id)
+        )"""
+    )
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id TEXT NOT NULL DEFAULT 'default_org',
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_table TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            before_json TEXT,
+            after_json TEXT,
+            created_at TEXT NOT NULL
+        )"""
+    )
+    for tbl in ("students", "attendance", "lobbies", "notifications", "review_queue"):
+        cur.execute(f"PRAGMA table_info({tbl})")
+        cols = {r[1] for r in cur.fetchall()}
+        if "org_id" not in cols:
+            cur.execute(f"ALTER TABLE {tbl} ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default_org'")
+    cur.execute("PRAGMA table_info(students)")
+    scols = {r[1] for r in cur.fetchall()}
+    for col, defn in [
+        ("consent_given", "INTEGER NOT NULL DEFAULT 0"),
+        ("consent_version", "TEXT DEFAULT ''"),
+        ("consent_at", "TEXT DEFAULT ''"),
+    ]:
+        if col not in scols:
+            cur.execute(f"ALTER TABLE students ADD COLUMN {col} {defn}")
+    conn.commit()
+
+
+def create_user(
+    conn: sqlite3.Connection,
+    username: str,
+    password: str,
+    role: str,
+    *,
+    org_id: str = DEFAULT_ORG_ID,
+    student_id: str | None = None,
+) -> bool:
+    role_clean = role.strip().lower()
+    if role_clean not in {"admin", "instructor", "student", "guardian"}:
+        raise ValueError("Invalid role.")
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """INSERT INTO users (username, password_hash, role, org_id, student_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (username.strip(), hash_password(password), role_clean, org_id, student_id, datetime.now().strftime("%Y-%m-%d %H:%M")),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def authenticate_user(conn: sqlite3.Connection, username: str, password: str) -> dict[str, Any] | None:
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, password_hash, role, org_id, student_id FROM users WHERE username = ?", (username.strip(),))
+    row = cur.fetchone()
+    if not row or not verify_password(password, row[2]):
+        return None
+    return {"id": row[0], "username": row[1], "role": row[3], "org_id": row[4], "student_id": row[5]}
+
+
+def link_guardian_to_student(conn: sqlite3.Connection, guardian_username: str, student_id: str, org_id: str = DEFAULT_ORG_ID) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT OR IGNORE INTO guardian_student_links (guardian_username, student_id, org_id) VALUES (?, ?, ?)",
+        (guardian_username.strip(), student_id.strip(), org_id),
+    )
+    conn.commit()
+
+
+def list_accessible_students(conn: sqlite3.Connection, user: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Enforces role and org_id permissions in the database query layer."""
+    if not user:
+        return []
+    role = user.get("role", "")
+    org_id = user.get("org_id", DEFAULT_ORG_ID)
+    cur = conn.cursor()
+    if role in {"admin", "instructor"}:
+        cur.execute(
+            "SELECT student_id, name, biometric_enrolled, consent_given, consent_version, created_at FROM students WHERE org_id = ? ORDER BY student_id",
+            (org_id,),
+        )
+        rows = cur.fetchall()
+    elif role == "student" and user.get("student_id"):
+        cur.execute(
+            "SELECT student_id, name, biometric_enrolled, consent_given, consent_version, created_at FROM students WHERE org_id = ? AND student_id = ?",
+            (org_id, user["student_id"]),
+        )
+        rows = cur.fetchall()
+    elif role == "guardian":
+        cur.execute(
+            """SELECT s.student_id, s.name, s.biometric_enrolled, s.consent_given, s.consent_version, s.created_at
+               FROM students s
+               INNER JOIN guardian_student_links g
+                 ON s.student_id = g.student_id AND s.org_id = g.org_id
+               WHERE g.guardian_username = ? AND s.org_id = ?
+               ORDER BY s.student_id""",
+            (user["username"], org_id),
+        )
+        rows = cur.fetchall()
+    else:
+        rows = []
+    return [
+        {
+            "student_id": r[0],
+            "name": r[1],
+            "biometric_enrolled": bool(r[2]),
+            "consent_given": bool(r[3]),
+            "consent_version": r[4] or "",
+            "created_at": r[5],
+        }
+        for r in rows
+    ]
+
+
+# --- Consent, Audit Log, Delete-My-Data & Retention Purge ---
+def record_biometric_consent(
+    conn: sqlite3.Connection,
+    student_id: str,
+    *,
+    consent_given: bool,
+    policy_version: str = CURRENT_POLICY_VERSION,
+    org_id: str = DEFAULT_ORG_ID,
+    actor: str = "system",
+) -> None:
+    if not consent_given:
+        raise ValueError("Explicit consent is required before biometric enrollment.")
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT consent_given, consent_version FROM students WHERE student_id = ? AND org_id = ?",
+        (student_id, org_id),
+    )
+    before = cur.fetchone()
+    cur.execute(
+        "UPDATE students SET consent_given = 1, consent_version = ?, consent_at = ? WHERE student_id = ? AND org_id = ?",
+        (policy_version, now_str, student_id, org_id),
+    )
+    log_audit_event(
+        conn,
+        org_id=org_id,
+        actor=actor,
+        action="RECORD_CONSENT",
+        target_table="students",
+        target_id=student_id,
+        before_data={"consent_given": bool(before[0]), "consent_version": before[1]} if before else None,
+        after_data={"consent_given": True, "consent_version": policy_version, "consent_at": now_str},
+    )
+    conn.commit()
+
+
+def log_audit_event(
+    conn: sqlite3.Connection,
+    *,
+    org_id: str,
+    actor: str,
+    action: str,
+    target_table: str,
+    target_id: str,
+    before_data: dict[str, Any] | None,
+    after_data: dict[str, Any] | None,
+) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """INSERT INTO audit_log
+           (org_id, actor, action, target_table, target_id, before_json, after_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            org_id,
+            actor,
+            action,
+            target_table,
+            target_id,
+            json.dumps(before_data) if before_data is not None else None,
+            json.dumps(after_data) if after_data is not None else None,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    conn.commit()
+
+
+def delete_student_my_data(
+    conn: sqlite3.Connection,
+    student_id: str,
+    *,
+    org_id: str = DEFAULT_ORG_ID,
+    actor: str = "self_service",
+) -> None:
+    cur = conn.cursor()
+    cur.execute("SELECT student_id, name, biometric_enrolled FROM students WHERE student_id = ? AND org_id = ?", (student_id, org_id))
+    row = cur.fetchone()
+    for tbl in ("student_embeddings", "attendance", "subject_records", "daily_logs", "dispute_tickets", "notifications", "guardian_student_links"):
+        cur.execute(f"DELETE FROM {tbl} WHERE student_id = ?", (student_id,))
+    cur.execute("DELETE FROM students WHERE student_id = ? AND org_id = ?", (student_id, org_id))
+    log_audit_event(
+        conn,
+        org_id=org_id,
+        actor=actor,
+        action="DELETE_MY_DATA",
+        target_table="students",
+        target_id=student_id,
+        before_data={"student_id": row[0], "name": row[1]} if row else None,
+        after_data=None,
+    )
+    conn.commit()
+
+
+def purge_expired_records(conn: sqlite3.Connection, retention_days: int = 90, org_id: str = DEFAULT_ORG_ID) -> int:
+    cutoff = (datetime.now() - timedelta(days=max(1, int(retention_days)))).strftime("%Y-%m-%d")
+    cur = conn.cursor()
+    cur.execute("DELETE FROM daily_logs WHERE log_date < ?", (cutoff,))
+    deleted = cur.rowcount
+    log_audit_event(
+        conn,
+        org_id=org_id,
+        actor="retention_job",
+        action="PURGE_EXPIRED",
+        target_table="daily_logs",
+        target_id=f"before_{cutoff}",
+        before_data={"retention_days": retention_days, "cutoff": cutoff},
+        after_data={"deleted_rows": deleted},
+    )
+    conn.commit()
+    return max(0, int(deleted))
+
+    # ==============================================================================
+# PHASE 4: REAL NOTIFICATIONS (EMAIL/SMS) & CSV / EXCEL / PDF EXPORTS
+# ==============================================================================
+from modules.database import get_session_data
+from modules.notifications_reports import (
+    build_rich_pdf_bytes,
+    export_attendance_csv_bytes,
+    export_attendance_excel_bytes,
+    send_real_alert,
+)
+
+with st.expander("Real Alerts & Attendance Exports (Phase 4)", expanded=False):
+    ea1, ea2 = st.text_input("Student / Guardian Email", key="p4_email"), st.text_input("Phone (E.164 for Twilio SMS)", key="p4_phone")
+    e_msg = st.text_input("Alert Message", value="Attendance threshold notice from AttendAI.", key="p4_msg")
+    if st.button("Send Alert & Log Status", key="p4_send_btn", type="primary"):
+        res = send_real_alert(
+            recipient_email=ea1,
+            recipient_phone=ea2,
+            subject=f"AttendAI Alert — {st.session_state.session_id}",
+            body=e_msg,
+            is_demo=bool(st.session_state.get("demo_mode", False)),
+        )
+        dispatch_notification(
+            "Parent",
+            st.session_state.active_student_id or "GENERAL",
+            "Student",
+            "Attendance Alert",
+            "Warning",
+            f"Alert ({res['delivery_status']})",
+            e_msg,
+            channels=res["channels_label"],
+        )
+        st.info(f"Channels: **{res['channels_label']}** · Status: **{res['delivery_status']}**")
+
+    att_df, eng_df, _ = get_session_data("ALL")
+    if not att_df.empty:
+        xc1, xc2, xc3 = st.columns(3)
+        with xc1:
+            st.download_button("Download Attendance CSV", data=export_attendance_csv_bytes(att_df), file_name="attendai_attendance.csv", mime="text/csv", key="p4_csv_btn")
+        with xc2:
+            st.download_button("Download Attendance Excel", data=export_attendance_excel_bytes(att_df, eng_df), file_name="attendai_attendance.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="p4_xlsx_btn")
+        with xc3:
+            pdf_b = build_rich_pdf_bytes(
+                title="AttendAI Attendance Report",
+                subtitle=f"Session {st.session_state.session_id}",
+                df_att=att_df,
+                is_demo=bool(st.session_state.get("demo_mode", False)),
+            )
+            st.download_button("Download Tabular PDF", data=pdf_b, file_name="attendai_tabular_report.pdf", mime="application/pdf", key="p4_pdf_btn")
+
+            # ==============================================================================
+# PHASE 5: ANTI-SPOOFING CHECK & HONEST MODEL EVALUATION VIEWER
+# ==============================================================================
+from modules.liveness_eval import check_liveness, run_synthetic_smoke_evaluation
+
+with st.expander("Anti-Spoofing & Model Evaluation (Phase 5)", expanded=False):
+    st.caption("Evaluation status on real classroom dataset: **Not yet run**. Synthetic smoke test only below.")
+    ev1, ev2 = st.columns(2)
+    with ev1:
+        ch_req = st.selectbox("Enrollment / Check-In Challenge", ["NONE", "LEFT", "RIGHT", "CENTER"], key="p5_ch_req")
+        ch_obs = st.selectbox("Observed Head Turn", ["NONE", "LEFT", "RIGHT", "CENTER"], key="p5_ch_obs")
+        if st.button("Test Liveness Gate", key="p5_live_btn"):
+            lv = check_liveness(None, challenge_head_turn=ch_req, observed_head_turn=ch_obs)
+            st.write(f"**Passed:** `{lv.passed}` · **Method:** `{lv.method}` — {lv.reason}")
+    with ev2:
+        if st.button("Run Synthetic Smoke Check", key="p5_eval_btn"):
+            st.session_state.p5_smoke_res = run_synthetic_smoke_evaluation()
+        if "p5_smoke_res" in st.session_state:
+            st.json(st.session_state.p5_smoke_res)

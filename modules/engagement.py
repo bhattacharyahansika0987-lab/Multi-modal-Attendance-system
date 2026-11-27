@@ -1,156 +1,205 @@
-import cv2
-import time
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable
+
 import numpy as np
-from collections import deque
-from modules.database import log_engagement
 
-try:
-    import sounddevice as sd
-    import webrtcvad
-    AUDIO_AVAILABLE = True
-except Exception:
-    sd = None
-    webrtcvad = None
-    AUDIO_AVAILABLE = False
+from modules.attendance import FaceDetection
+
+# Honest defaults for 5-point InsightFace keypoint head-pose proxy
+DEFAULT_MAX_YAW_DEG = 25.0
+DEFAULT_MAX_PITCH_DEG = 20.0
+NEUTRAL_NOSE_VERTICAL_RATIO = 0.48
 
 
-class MultimodalEngagementAnalyzer:
-    def __init__(self, sample_rate: int = 16000):
-        # 1. Visual setup: OpenCV Haar Cascades (100% offline, cross-platform)
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+@dataclass(frozen=True)
+class HeadPoseEstimate:
+    """Estimated head orientation for a single detected face (roll-invariant)."""
+
+    yaw_deg: float          # Positive = turned right, negative = turned left
+    pitch_deg: float        # Positive = tilted down, negative = tilted up
+    facing_front: bool
+    alignment_score: float  # 0..100 continuous closeness to front-facing (0, 0)
+
+
+@dataclass(frozen=True)
+class SnapshotAttentionSummary:
+    """
+    Honest snapshot-level attention metrics derived solely from detected
+    facial keypoints. Audio is explicitly reported as unmeasured unless
+    live audio capture is provided.
+    """
+
+    measured: bool
+    faces_evaluated: int
+    faces_facing_front: int
+    facing_front_ratio: float | None        # Percentage 0..100 (None if no usable faces)
+    mean_alignment_score: float | None      # Percentage 0..100 (None if no usable faces)
+    mean_abs_yaw_deg: float | None
+    mean_abs_pitch_deg: float | None
+    audio_measured: bool
+    audio_status: str                       # "Not measured" when mic capture is absent
+    active_weights: dict[str, float]        # Renormalized weights summing to 1.0
+    combined_attention_score: float | None  # Weighted score over measured modalities only
+
+
+def renormalize_weights(
+    requested_weights: dict[str, float],
+    available_modalities: set[str],
+) -> dict[str, float]:
+    """
+    Drops unmeasured modalities (e.g., audio when no microphone stream exists)
+    and renormalizes remaining non-negative weights so they sum to 1.0.
+    """
+    active = {
+        k: max(0.0, float(v))
+        for k, v in requested_weights.items()
+        if k in available_modalities
+    }
+    total = sum(active.values())
+    if total <= 1e-9:
+        if not available_modalities:
+            return {}
+        equal = round(1.0 / len(available_modalities), 4)
+        return {k: equal for k in sorted(available_modalities)}
+    return {k: round(v / total, 4) for k, v in active.items()}
+
+
+def estimate_head_pose_from_kps(
+    kps: np.ndarray | None,
+    *,
+    max_yaw_deg: float = DEFAULT_MAX_YAW_DEG,
+    max_pitch_deg: float = DEFAULT_MAX_PITCH_DEG,
+) -> HeadPoseEstimate | None:
+    """
+    Estimates approximate head yaw and pitch (in degrees) from InsightFace's
+    5 facial keypoints: [left_eye, right_eye, nose, left_mouth, right_mouth].
+    Returns None if keypoints are missing or degenerate.
+    """
+    if kps is None:
+        return None
+    pts = np.asarray(kps, dtype=np.float32)
+    if pts.shape != (5, 2) or not np.all(np.isfinite(pts)):
+        return None
+
+    left_eye, right_eye, nose, left_mouth, right_mouth = pts
+    eye_vec = right_eye - left_eye
+    iod = float(np.linalg.norm(eye_vec))
+    if iod < 5.0:
+        return None
+
+    # Local roll-invariant coordinate frame anchored at eye midpoint
+    u_x = eye_vec / iod
+    u_y = np.array([-u_x[1], u_x[0]], dtype=np.float32)
+
+    eye_center = 0.5 * (left_eye + right_eye)
+    mouth_center = 0.5 * (left_mouth + right_mouth)
+    face_height_vec = mouth_center - eye_center
+
+    # Ensure u_y points downward from eyes toward mouth
+    if float(np.dot(face_height_vec, u_y)) < 0.0:
+        u_y = -u_y
+
+    v_dist = float(np.dot(face_height_vec, u_y))
+    if v_dist < 5.0:
+        return None
+
+    nose_rel = nose - eye_center
+    dx = float(np.dot(nose_rel, u_x))
+    dy = float(np.dot(nose_rel, u_y))
+
+    # Yaw: horizontal displacement of nose relative to half inter-ocular distance
+    yaw_deg = float(np.clip((dx / (0.5 * iod)) * 45.0, -90.0, 90.0))
+
+    # Pitch: vertical shift of nose relative to neutral eye-to-mouth proportion
+    nose_ratio = dy / v_dist
+    pitch_deg = float(np.clip(((nose_ratio - NEUTRAL_NOSE_VERTICAL_RATIO) / 0.35) * 45.0, -60.0, 60.0))
+
+    facing_front = (abs(yaw_deg) <= max_yaw_deg) and (abs(pitch_deg) <= max_pitch_deg)
+    yaw_pen = min(1.0, abs(yaw_deg) / 45.0)
+    pitch_pen = min(1.0, abs(pitch_deg) / 35.0)
+    alignment = max(0.0, 100.0 * (1.0 - 0.5 * (yaw_pen + pitch_pen)))
+
+    return HeadPoseEstimate(
+        yaw_deg=round(yaw_deg, 1),
+        pitch_deg=round(pitch_deg, 1),
+        facing_front=facing_front,
+        alignment_score=round(alignment, 1),
+    )
+
+
+def analyze_snapshot_attention(
+    detections: Iterable[FaceDetection],
+    *,
+    min_det_score: float = 0.60,
+    min_face_size_px: float = 40.0,
+    max_yaw_deg: float = DEFAULT_MAX_YAW_DEG,
+    max_pitch_deg: float = DEFAULT_MAX_PITCH_DEG,
+    requested_weights: dict[str, float] | None = None,
+) -> SnapshotAttentionSummary:
+    """
+    Computes honest visual attention proxies from a snapshot's detected faces.
+    Audio is not captured on Streamlit Cloud CPU without WebRTC and is reported
+    explicitly as 'Not measured', with weights renormalized over measured signals.
+    """
+    req_w = requested_weights or {
+        "facing_front": 0.50,
+        "head_alignment": 0.25,
+        "audio": 0.25,
+    }
+
+    poses: list[HeadPoseEstimate] = []
+    for det in detections:
+        if det.det_score < min_det_score or det.face_size_px < min_face_size_px:
+            continue
+        est = estimate_head_pose_from_kps(
+            det.kps,
+            max_yaw_deg=max_yaw_deg,
+            max_pitch_deg=max_pitch_deg,
         )
-        self.eye_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_eye.xml"
-        )
-        self.prev_center = None
-        self.last_active_time = time.time()
+        if est is not None:
+            poses.append(est)
 
-        # 2. Audio setup: Cloud-safe WebRTC VAD (100% offline, zero audio recorded)
-        self.sample_rate = sample_rate
-        self.vad = webrtcvad.Vad(2) if AUDIO_AVAILABLE else None
-        self.speech_flags = deque(maxlen=150)
-        self.audio_running = False
-        self.stream = None
-
-        # 3. Rolling score buffers for smooth multimodal fusion
-        self.gaze_history = deque(maxlen=30)
-        self.movement_history = deque(maxlen=30)
-
-    def start_audio(self):
-        """Starts background microphone monitoring if local audio hardware is available."""
-        if self.audio_running or not AUDIO_AVAILABLE or self.vad is None:
-            return
-
-        self.audio_running = True
-        frame_duration_ms = 30
-        frame_size = int(self.sample_rate * frame_duration_ms / 1000)
-
-        def audio_callback(indata, frames, time_info, status):
-            if not self.audio_running:
-                return
-            pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
-            try:
-                is_speech = self.vad.is_speech(pcm, self.sample_rate)
-                self.speech_flags.append(1.0 if is_speech else 0.0)
-            except Exception:
-                pass
-
-        try:
-            self.stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=1,
-                dtype="float32",
-                blocksize=frame_size,
-                callback=audio_callback,
-            )
-            self.stream.start()
-        except Exception as e:
-            print(f"Warning: Microphone unavailable ({e}). Running visual-only mode.")
-            self.audio_running = False
-
-    def stop_audio(self):
-        """Safely stops microphone stream."""
-        self.audio_running = False
-        if self.stream is not None:
-            try:
-                self.stream.stop()
-                self.stream.close()
-            except Exception:
-                pass
-            self.stream = None
-
-    def analyze_frame(self, frame: np.ndarray):
-        """Computes visual head-pose/inactivity and fuses with live audio activity."""
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(
-            gray, scaleFactor=1.15, minNeighbors=5, minSize=(60, 60)
+    if not poses:
+        return SnapshotAttentionSummary(
+            measured=False,
+            faces_evaluated=0,
+            faces_facing_front=0,
+            facing_front_ratio=None,
+            mean_alignment_score=None,
+            mean_abs_yaw_deg=None,
+            mean_abs_pitch_deg=None,
+            audio_measured=False,
+            audio_status="Not measured",
+            active_weights={},
+            combined_attention_score=None,
         )
 
-        gaze_score = 0.0
-        movement_score = 0.0
-        inactivity_sec = round(time.time() - self.last_active_time, 1)
+    front_cnt = sum(1 for p in poses if p.facing_front)
+    front_ratio = round((front_cnt / len(poses)) * 100.0, 1)
+    mean_align = round(float(np.mean([p.alignment_score for p in poses])), 1)
+    mean_yaw = round(float(np.mean([abs(p.yaw_deg) for p in poses])), 1)
+    mean_pitch = round(float(np.mean([abs(p.pitch_deg) for p in poses])), 1)
 
-        if len(faces) > 0:
-            face_gazes = []
-            for (x, y, w, h) in faces:
-                roi_gray = gray[y : y + int(h * 0.6), x : x + w]
-                eyes = self.eye_cascade.detectMultiScale(
-                    roi_gray, scaleFactor=1.1, minNeighbors=4
-                )
-                if len(eyes) >= 2:
-                    face_gazes.append(95.0)
-                elif len(eyes) == 1:
-                    face_gazes.append(75.0)
-                else:
-                    face_gazes.append(55.0)
+    # Renormalize strictly across measured modalities (audio excluded)
+    active_w = renormalize_weights(req_w, {"facing_front", "head_alignment"})
+    combined = round(
+        front_ratio * active_w.get("facing_front", 0.0)
+        + mean_align * active_w.get("head_alignment", 0.0),
+        1,
+    )
 
-            gaze_score = float(np.mean(face_gazes))
-
-            # Movement & inactivity check using primary face centroid
-            x, y, w, h = faces[0]
-            curr_center = np.array([x + w / 2.0, y + h / 2.0])
-            if self.prev_center is not None:
-                delta = float(np.linalg.norm(curr_center - self.prev_center))
-                if delta > 2.5:
-                    self.last_active_time = time.time()
-                    inactivity_sec = 0.0
-
-                if inactivity_sec > 15.0:
-                    movement_score = 35.0
-                elif delta > 45.0:
-                    movement_score = 55.0
-                else:
-                    movement_score = 88.0
-            else:
-                movement_score = 80.0
-            self.prev_center = curr_center
-
-        self.gaze_history.append(gaze_score)
-        self.movement_history.append(movement_score)
-
-        # Audio speech ratio (0-100%) with neutral 50% baseline when visual-only
-        audio_score = (float(np.mean(self.speech_flags)) * 100.0) if self.speech_flags else 50.0
-
-        # Multimodal Fusion Formula: 0.50 * Gaze + 0.25 * Movement + 0.25 * Audio
-        smooth_gaze = float(np.mean(self.gaze_history))
-        smooth_move = float(np.mean(self.movement_history))
-        total_engagement = (0.50 * smooth_gaze) + (0.25 * smooth_move) + (0.25 * audio_score)
-
-        return {
-            "gaze_score": round(smooth_gaze, 1),
-            "movement_score": round(smooth_move, 1),
-            "audio_score": round(audio_score, 1),
-            "total_engagement": round(total_engagement, 1),
-            "inactivity_sec": inactivity_sec,
-        }
-
-    def save_window_metrics(self, session_id: str, metrics: dict):
-        """Persists time-window engagement scores into SQLite."""
-        log_engagement(
-            session_id=session_id,
-            gaze=metrics["gaze_score"],
-            movement=metrics["movement_score"],
-            audio=metrics["audio_score"],
-            total=metrics["total_engagement"],
-        )
+    return SnapshotAttentionSummary(
+        measured=True,
+        faces_evaluated=len(poses),
+        faces_facing_front=front_cnt,
+        facing_front_ratio=front_ratio,
+        mean_alignment_score=mean_align,
+        mean_abs_yaw_deg=mean_yaw,
+        mean_abs_pitch_deg=mean_pitch,
+        audio_measured=False,
+        audio_status="Not measured",
+        active_weights=active_w,
+        combined_attention_score=combined,
+    )
