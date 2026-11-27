@@ -1,600 +1,506 @@
 import html
 
 SVG_ICONS = {
-    "brand": """<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>""",
-    "lock": """<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>""",
-    "alert": """<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>""",
-    "bell": """<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FCA5A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>""",
-    "room": """<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>""",
+    "brand": """<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>""",
+    "lock": """<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>""",
+    "flag": """<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>""",
 }
 
 
-def get_app_css() -> str:
-    return """
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return f"rgba(220, 38, 38, {alpha})"
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def get_app_css(accent_color: str = "#DC2626") -> str:
+    """
+    Strict 3-Color Light Editorial Theme:
+      1. Pure White (#FFFFFF) canvas & surfaces
+      2. Black Ink (#000000) text, crisp highlights, primary buttons & borders
+      3. User-Selectable Accent / Flag Color (accent_color) for important flags & alerts
+    """
+    flag_soft = _hex_to_rgba(accent_color, 0.08)
+    flag_border = _hex_to_rgba(accent_color, 0.45)
+
+    return f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    :root {
-        --bg-canvas: #0F172A;
-        --bg-surface: #131C31;
-        --bg-elevated: #1E293B;
-        --bg-hover: #26354D;
-        --border-slate: #334155;
-        --border-muted: rgba(148, 163, 184, 0.18);
-        --text-primary: #F8FAFC;
-        --text-secondary: #CBD5E1;
-        --text-muted: #94A3B8;
-        --indigo-500: #6366F1;
-        --indigo-600: #4F46E5;
-        --indigo-700: #4338CA;
-        --emerald-500: #10B981;
-        --sky-500: #0EA5E9;
-        --amber-500: #F59E0B;
-        --red-500: #EF4444;
-        --shadow-card: 0 4px 20px rgba(2, 6, 23, 0.40);
-    }
+    :root {{
+        --white: #FFFFFF;
+        --ink: #000000;
+        --ink-soft: #3F3F46;
+        --line-light: #E4E4E7;
+        --line-ink: #000000;
+        --flag: {accent_color};
+        --flag-soft: {flag_soft};
+        --flag-border: {flag_border};
+    }}
 
-    html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {{
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
-        background-color: var(--bg-canvas) !important;
-        color: var(--text-primary) !important;
+        background-color: var(--white) !important;
+        color: var(--ink) !important;
         -webkit-font-smoothing: antialiased;
-    }
+    }}
 
-    .stApp {
-        background:
-            radial-gradient(circle at 8% 0%, rgba(99, 102, 241, 0.13) 0%, transparent 38%),
-            radial-gradient(circle at 92% 4%, rgba(14, 165, 233, 0.08) 0%, transparent 35%),
-            var(--bg-canvas) !important;
-    }
-
-    .mono, .kpi-value, .kpi-delta, .timer-val, .seat-pct {
-        font-family: 'Inter', sans-serif;
+    .num, .kpi-value, .timer-val {{
         font-variant-numeric: tabular-nums;
-    }
+    }}
 
-    /* Transparent Header (Preserves Sidebar Reopen Arrow) */
-    header[data-testid="stHeader"] {
-        background: transparent !important;
-    }
+    /* Clean Light Header (Keeps Sidebar Toggle Arrow Clickable) */
+    header[data-testid="stHeader"] {{
+        background-color: var(--white) !important;
+        border-bottom: 1px solid var(--line-light);
+    }}
     header[data-testid="stHeader"] button,
-    header[data-testid="stHeader"] svg {
-        color: var(--text-secondary) !important;
-        fill: var(--text-secondary) !important;
-    }
+    header[data-testid="stHeader"] svg {{
+        color: var(--ink) !important;
+        fill: var(--ink) !important;
+    }}
     #MainMenu,
     footer,
     div[data-testid="stAppDeployButton"],
     div[data-testid="stDecoration"],
-    div[data-testid="stStatusWidget"] {
+    div[data-testid="stStatusWidget"] {{
         display: none !important;
         visibility: hidden !important;
-    }
+    }}
 
-    .block-container {
-        padding-top: 2.5rem !important;
+    .block-container {{
+        padding-top: 2.75rem !important;
         padding-bottom: 3.5rem !important;
         padding-left: 2rem !important;
         padding-right: 2rem !important;
-        max-width: 1460px;
-    }
+        max-width: 1420px;
+    }}
 
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background-color: #0B1222 !important;
-        border-right: 1px solid var(--border-muted) !important;
-    }
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] span {
-        color: var(--text-secondary);
-    }
-    section[data-testid="stSidebar"] details {
-        background-color: var(--bg-surface) !important;
-        border: 1px solid var(--border-slate) !important;
-        border-radius: 10px !important;
+    /* Pure White Sidebar with Black Ink Border */
+    section[data-testid="stSidebar"] {{
+        background-color: var(--white) !important;
+        border-right: 1.5px solid var(--ink) !important;
+    }}
+    section[data-testid="stSidebar"] * {{
+        color: var(--ink);
+    }}
+    section[data-testid="stSidebar"] details {{
+        background-color: var(--white) !important;
+        border: 1px solid var(--line-light) !important;
+        border-radius: 8px !important;
         padding: 2px 6px;
-    }
-    section[data-testid="stSidebar"] summary {
+    }}
+    section[data-testid="stSidebar"] summary {{
         font-weight: 600 !important;
         font-size: 0.85rem !important;
-        color: var(--text-primary) !important;
-    }
+        color: var(--ink) !important;
+    }}
 
-    /* Inputs, Dropdowns & Menus */
+    /* Force Light-Mode Inputs, Dropdowns, Textareas & Number Inputs */
     div[data-baseweb="input"] > div,
     div[data-baseweb="select"] > div,
     textarea,
     .stTextInput input,
-    .stNumberInput input {
-        background-color: var(--bg-elevated) !important;
-        border: 1px solid var(--border-slate) !important;
+    .stNumberInput input,
+    .stDateInput input {{
+        background-color: var(--white) !important;
+        border: 1px solid var(--line-light) !important;
         border-radius: 8px !important;
-        color: var(--text-primary) !important;
-    }
+        color: var(--ink) !important;
+        transition: border-color 0.15s ease !important;
+    }}
     div[data-baseweb="select"] > div *,
-    div[data-baseweb="input"] input {
-        color: var(--text-primary) !important;
-    }
-    div[data-baseweb="select"] svg {
-        fill: var(--text-secondary) !important;
-    }
+    div[data-baseweb="input"] input,
+    textarea {{
+        color: var(--ink) !important;
+    }}
+    input::placeholder,
+    textarea::placeholder {{
+        color: #71717A !important;
+        opacity: 1 !important;
+    }}
+    div[data-baseweb="select"] svg {{
+        fill: var(--ink) !important;
+    }}
     div[data-baseweb="input"] > div:hover,
-    div[data-baseweb="select"] > div:hover {
-        border-color: var(--indigo-500) !important;
-    }
-    ul[data-baseweb="menu"] {
-        background-color: var(--bg-elevated) !important;
-        border: 1px solid var(--border-slate) !important;
-    }
-    ul[data-baseweb="menu"] li {
-        color: var(--text-primary) !important;
-    }
-    ul[data-baseweb="menu"] li:hover {
-        background-color: var(--bg-hover) !important;
-    }
+    div[data-baseweb="select"] > div:hover,
+    textarea:hover {{
+        border-color: var(--ink) !important;
+    }}
+    div[data-baseweb="input"] > div:focus-within,
+    div[data-baseweb="select"] > div:focus-within {{
+        border-color: var(--ink) !important;
+        box-shadow: 0 0 0 1px var(--ink) !important;
+    }}
+    ul[data-baseweb="menu"] {{
+        background-color: var(--white) !important;
+        border: 1.5px solid var(--ink) !important;
+    }}
+    ul[data-baseweb="menu"] li {{
+        color: var(--ink) !important;
+    }}
+    ul[data-baseweb="menu"] li:hover {{
+        background-color: #F4F4F5 !important;
+    }}
 
-    /* High-Contrast Popover Triggers ('New Room', 'Join Room', 'New Assignment') */
+    /* Popover Triggers & Bodies (Pure White + Black Ink) */
     [data-testid="stPopover"] button,
-    [data-testid="stPopoverButton"] {
-        background-color: var(--bg-elevated) !important;
-        border: 1px solid #475569 !important;
+    [data-testid="stPopoverButton"] {{
+        background-color: var(--white) !important;
+        border: 1.5px solid var(--ink) !important;
         border-radius: 8px !important;
-        color: var(--text-primary) !important;
+        color: var(--ink) !important;
         font-weight: 600 !important;
         font-size: 0.84rem !important;
-        min-height: 2.45rem !important;
-        transition: all 0.16s ease !important;
-    }
+        min-height: 2.4rem !important;
+    }}
     [data-testid="stPopover"] button *,
-    [data-testid="stPopoverButton"] * {
-        color: var(--text-primary) !important;
-        fill: var(--text-primary) !important;
-    }
+    [data-testid="stPopoverButton"] * {{
+        color: var(--ink) !important;
+        fill: var(--ink) !important;
+    }}
     [data-testid="stPopover"] button:hover,
-    [data-testid="stPopoverButton"]:hover {
-        background-color: var(--indigo-600) !important;
-        border-color: var(--indigo-500) !important;
-        color: #FFFFFF !important;
-    }
-    [data-testid="stPopoverBody"] {
-        background-color: var(--bg-surface) !important;
-        border: 1px solid var(--border-slate) !important;
-        border-radius: 12px !important;
-    }
+    [data-testid="stPopoverButton"]:hover {{
+        background-color: var(--ink) !important;
+        color: var(--white) !important;
+    }}
+    [data-testid="stPopover"] button:hover *,
+    [data-testid="stPopoverButton"]:hover * {{
+        color: var(--white) !important;
+        fill: var(--white) !important;
+    }}
+    [data-testid="stPopoverBody"] {{
+        background-color: var(--white) !important;
+        border: 1.5px solid var(--ink) !important;
+        border-radius: 10px !important;
+        color: var(--ink) !important;
+    }}
 
-    /* High-Contrast Action Buttons ('Host Next' & Primary CTAs) */
+    /* Primary (Black Ink) & Secondary (White + Black Ink Outline) Buttons */
     .stButton > button,
     .stDownloadButton > button,
-    .stFormSubmitButton > button {
+    .stFormSubmitButton > button {{
         border-radius: 8px !important;
         font-weight: 600 !important;
         font-size: 0.84rem !important;
-        min-height: 2.45rem !important;
+        min-height: 2.4rem !important;
         white-space: nowrap !important;
-        transition: all 0.16s ease !important;
-    }
+        transition: all 0.14s ease !important;
+    }}
     .stButton > button[kind="secondary"],
     .stDownloadButton > button[kind="secondary"],
-    .stFormSubmitButton > button[kind="secondary"] {
-        background-color: rgba(99, 102, 241, 0.15) !important;
-        border: 1px solid #6366F1 !important;
-        color: #F8FAFC !important;
-    }
+    .stFormSubmitButton > button[kind="secondary"] {{
+        background-color: var(--white) !important;
+        border: 1.5px solid var(--ink) !important;
+        color: var(--ink) !important;
+    }}
     .stButton > button[kind="secondary"] *,
     .stDownloadButton > button[kind="secondary"] *,
-    .stFormSubmitButton > button[kind="secondary"] * {
-        color: #F8FAFC !important;
-    }
+    .stFormSubmitButton > button[kind="secondary"] * {{
+        color: var(--ink) !important;
+    }}
     .stButton > button[kind="secondary"]:hover,
-    .stDownloadButton > button[kind="secondary"]:hover,
-    .stFormSubmitButton > button[kind="secondary"]:hover {
-        background-color: var(--indigo-600) !important;
-        border-color: #818CF8 !important;
-        color: #FFFFFF !important;
-        box-shadow: 0 2px 10px rgba(99, 102, 241, 0.35) !important;
-    }
+    .stDownloadButton > button[kind="secondary"]:hover {{
+        background-color: var(--ink) !important;
+        color: var(--white) !important;
+    }}
+    .stButton > button[kind="secondary"]:hover *,
+    .stDownloadButton > button[kind="secondary"]:hover * {{
+        color: var(--white) !important;
+    }}
     .stButton > button[kind="primary"],
     .stDownloadButton > button[kind="primary"],
-    .stFormSubmitButton > button[kind="primary"] {
-        background-color: var(--indigo-600) !important;
-        border: 1px solid var(--indigo-500) !important;
-        color: #FFFFFF !important;
-    }
+    .stFormSubmitButton > button[kind="primary"] {{
+        background-color: var(--ink) !important;
+        border: 1.5px solid var(--ink) !important;
+        color: var(--white) !important;
+    }}
     .stButton > button[kind="primary"] *,
     .stDownloadButton > button[kind="primary"] *,
-    .stFormSubmitButton > button[kind="primary"] * {
-        color: #FFFFFF !important;
-    }
+    .stFormSubmitButton > button[kind="primary"] * {{
+        color: var(--white) !important;
+    }}
     .stButton > button[kind="primary"]:hover,
-    .stDownloadButton > button[kind="primary"]:hover {
-        background-color: var(--indigo-700) !important;
-        border-color: #818CF8 !important;
-    }
+    .stDownloadButton > button[kind="primary"]:hover {{
+        background-color: #27272A !important;
+        border-color: #27272A !important;
+    }}
 
-    /* Elevated Card Containers */
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: var(--bg-surface) !important;
-        border: 1px solid var(--border-slate) !important;
-        border-radius: 12px !important;
-        box-shadow: var(--shadow-card) !important;
-    }
-
-    [data-testid="stFileUploaderDropzone"] {
-        background-color: var(--bg-elevated) !important;
-        border: 1px dashed #475569 !important;
+    /* Pure White Bordered Cards */
+    [data-testid="stVerticalBlockBorderWrapper"] {{
+        background-color: var(--white) !important;
+        border: 1.5px solid var(--ink) !important;
         border-radius: 10px !important;
-    }
-
-    /* Legible Segmented Navigation Tabs (WCAG AA+ Contrast) */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 6px !important;
-        background-color: var(--bg-surface) !important;
-        padding: 5px !important;
-        border-radius: 11px !important;
-        border: 1px solid var(--border-slate) !important;
-        margin-bottom: 1.25rem !important;
-    }
-    .stTabs button[data-baseweb="tab"] {
+    }}
+    [data-testid="stFileUploaderDropzone"] {{
+        background-color: var(--white) !important;
+        border: 1.5px dashed var(--ink) !important;
         border-radius: 8px !important;
-        padding: 8px 16px !important;
-        background-color: transparent !important;
+    }}
+
+    /* Navigation Tabs (Black Ink Active Pill on Pure White) */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 6px !important;
+        background-color: var(--white) !important;
+        padding: 5px !important;
+        border-radius: 10px !important;
+        border: 1.5px solid var(--ink) !important;
+        margin-bottom: 1.25rem !important;
+    }}
+    .stTabs button[data-baseweb="tab"] {{
+        border-radius: 7px !important;
+        padding: 8px 14px !important;
+        background-color: var(--white) !important;
         border: 1px solid transparent !important;
-        transition: all 0.16s ease !important;
-    }
+    }}
     .stTabs button[data-baseweb="tab"] p,
-    .stTabs button[data-baseweb="tab"] span {
-        color: #94A3B8 !important;
+    .stTabs button[data-baseweb="tab"] span {{
+        color: var(--ink) !important;
         font-weight: 500 !important;
-        font-size: 0.86rem !important;
-    }
-    .stTabs button[data-baseweb="tab"]:hover {
-        background-color: rgba(148, 163, 184, 0.12) !important;
-    }
-    .stTabs button[data-baseweb="tab"]:hover p,
-    .stTabs button[data-baseweb="tab"]:hover span {
-        color: #F8FAFC !important;
-    }
-    .stTabs button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: var(--indigo-600) !important;
-        border: 1px solid var(--indigo-500) !important;
-        box-shadow: 0 2px 10px rgba(79, 70, 229, 0.35) !important;
-    }
+        font-size: 0.85rem !important;
+    }}
+    .stTabs button[data-baseweb="tab"]:hover {{
+        background-color: #F4F4F5 !important;
+    }}
+    .stTabs button[data-baseweb="tab"][aria-selected="true"] {{
+        background-color: var(--ink) !important;
+    }}
     .stTabs button[data-baseweb="tab"][aria-selected="true"] p,
-    .stTabs button[data-baseweb="tab"][aria-selected="true"] span {
-        color: #F8FAFC !important;
+    .stTabs button[data-baseweb="tab"][aria-selected="true"] span {{
+        color: var(--white) !important;
         font-weight: 600 !important;
-    }
+    }}
     .stTabs [data-baseweb="tab-highlight"],
-    .stTabs [data-baseweb="tab-border"] {
+    .stTabs [data-baseweb="tab-border"] {{
         display: none !important;
         background: transparent !important;
-    }
+    }}
 
     /* Top Workspace Header */
-    .top-bar {
-        background-color: var(--bg-surface);
-        border: 1px solid var(--border-slate);
-        border-radius: 12px;
-        padding: 15px 22px;
+    .top-bar {{
+        background-color: var(--white);
+        border: 1.5px solid var(--ink);
+        border-radius: 10px;
+        padding: 14px 20px;
         margin-bottom: 16px;
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 16px;
-        box-shadow: var(--shadow-card);
-    }
-    .brand-wrap { display: flex; align-items: center; gap: 12px; }
-    .brand-mark {
-        width: 38px;
-        height: 38px;
-        border-radius: 9px;
-        background: linear-gradient(135deg, #4F46E5, #6366F1);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+    }}
+    .brand-wrap {{ display: flex; align-items: center; gap: 12px; }}
+    .brand-mark {{
+        width: 36px; height: 36px; border-radius: 8px;
+        background-color: var(--ink);
+        display: flex; align-items: center; justify-content: center;
         flex-shrink: 0;
-        box-shadow: 0 2px 10px rgba(99, 102, 241, 0.35);
-    }
-    .brand-name {
-        font-size: 1.18rem !important;
-        font-weight: 700 !important;
-        letter-spacing: -0.02em !important;
-        color: #F8FAFC !important;
-        margin: 0 !important;
-        line-height: 1.2 !important;
-    }
-    .brand-desc {
-        font-size: 0.80rem !important;
-        color: #94A3B8 !important;
-        margin: 2px 0 0 0 !important;
-        line-height: 1.3 !important;
-    }
-    .top-meta { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
-    .chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        white-space: nowrap;
-        width: fit-content;
-        padding: 5px 12px;
-        border-radius: 999px;
-        font-size: 0.74rem;
-        font-weight: 600;
-        border: 1px solid var(--border-slate);
-        background-color: var(--bg-elevated);
-        color: #E2E8F0;
-    }
-    .chip-live {
-        background-color: rgba(16, 185, 129, 0.15);
-        border-color: rgba(16, 185, 129, 0.45);
-        color: #6EE7B7;
-    }
-    .chip-alert {
-        background-color: rgba(239, 68, 68, 0.16);
-        border-color: rgba(239, 68, 68, 0.45);
-        color: #FCA5A5;
-    }
-    .dot-live {
+    }}
+    .brand-name {{
+        font-size: 1.15rem; font-weight: 800; letter-spacing: -0.025em;
+        color: var(--ink); margin: 0; line-height: 1.2;
+    }}
+    .brand-desc {{
+        font-size: 0.79rem; color: var(--ink-soft); margin: 2px 0 0 0;
+    }}
+    .top-meta {{ display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }}
+    .chip {{
+        display: inline-flex; align-items: center; gap: 6px;
+        white-space: nowrap; width: fit-content;
+        padding: 5px 11px; border-radius: 999px;
+        font-size: 0.74rem; font-weight: 600;
+        border: 1.5px solid var(--ink);
+        background-color: var(--white);
+        color: var(--ink);
+    }}
+    .chip-flag {{
+        border-color: var(--flag);
+        background-color: var(--flag-soft);
+        color: var(--flag);
+    }}
+    .dot-flag {{
         width: 7px; height: 7px; border-radius: 50%;
-        background-color: #10B981;
-        box-shadow: 0 0 8px rgba(16, 185, 129, 0.85);
-    }
+        background-color: var(--flag);
+    }}
 
-    /* Typography Hierarchy */
-    .sec-title {
-        font-size: 0.98rem !important;
-        font-weight: 600 !important;
-        letter-spacing: -0.015em !important;
-        color: #F8FAFC !important;
+    /* Section Headings */
+    .sec-title {{
+        font-size: 0.96rem !important; font-weight: 700 !important;
+        letter-spacing: -0.015em !important; color: var(--ink) !important;
         margin: 0 0 3px 0 !important;
-    }
-    .sec-sub {
-        font-size: 0.81rem !important;
-        color: #94A3B8 !important;
+    }}
+    .sec-sub {{
+        font-size: 0.80rem !important; color: var(--ink-soft) !important;
         margin: 0 0 12px 0 !important;
-    }
+    }}
 
-    /* Elevated Faculty Cards & Glowing Pill Badges */
-    .faculty-card {
-        background-color: var(--bg-elevated);
-        border: 1px solid var(--border-slate);
+    /* KPI Cards */
+    .kpi-card {{
+        background-color: var(--white);
+        border: 1.5px solid var(--ink);
         border-radius: 10px;
-        padding: 14px 16px;
-        margin-bottom: 10px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-    }
-    .faculty-card-hosting {
-        border-color: rgba(16, 185, 129, 0.50);
-        background: linear-gradient(90deg, rgba(16, 185, 129, 0.10) 0%, #1E293B 45%);
-    }
-    .faculty-name { font-size: 0.90rem; font-weight: 600; color: #F8FAFC; line-height: 1.25; }
-    .faculty-subject { font-size: 0.79rem; color: #94A3B8; margin-top: 3px; }
-    .status-pill-hosting {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 12px;
-        border-radius: 999px;
-        font-size: 0.73rem;
-        font-weight: 600;
-        color: #6EE7B7;
-        background-color: rgba(16, 185, 129, 0.16);
-        border: 1px solid rgba(16, 185, 129, 0.55);
-        box-shadow: 0 0 14px rgba(16, 185, 129, 0.28);
-        white-space: nowrap;
-    }
-    .status-pill-available {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 12px;
-        border-radius: 999px;
-        font-size: 0.73rem;
-        font-weight: 600;
-        color: #7DD3FC;
-        background-color: rgba(14, 165, 233, 0.15);
-        border: 1px solid rgba(14, 165, 233, 0.45);
-        white-space: nowrap;
-    }
-    .pill-dot-emerald { width: 7px; height: 7px; border-radius: 50%; background-color: #10B981; box-shadow: 0 0 8px #10B981; }
-    .pill-dot-sky { width: 7px; height: 7px; border-radius: 50%; background-color: #0EA5E9; }
-
-    /* KPI, Seat, Coach & Notification Cards */
-    .kpi-card {
-        background-color: var(--bg-surface);
-        border: 1px solid var(--border-slate);
-        border-radius: 12px;
         padding: 16px 18px;
-        box-shadow: var(--shadow-card);
-    }
-    .kpi-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .kpi-label { font-size: 0.76rem; font-weight: 500; color: #94A3B8; }
-    .kpi-badge { font-size: 0.69rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
-    .badge-optimal { background: rgba(16, 185, 129, 0.15); color: #6EE7B7; border: 1px solid rgba(16, 185, 129, 0.4); }
-    .badge-watch { background: rgba(245, 158, 11, 0.15); color: #FCD34D; border: 1px solid rgba(245, 158, 11, 0.4); }
-    .badge-risk { background: rgba(239, 68, 68, 0.15); color: #FCA5A5; border: 1px solid rgba(239, 68, 68, 0.4); }
-    .kpi-mid { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
-    .kpi-value { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.025em; color: #F8FAFC; line-height: 1.1; }
-    .kpi-delta { display: inline-block; margin-top: 5px; font-size: 0.73rem; font-weight: 600; padding: 2px 7px; border-radius: 6px; }
-    .delta-pos { background: rgba(16, 185, 129, 0.16); color: #6EE7B7; }
-    .delta-neg { background: rgba(245, 158, 11, 0.16); color: #FCD34D; }
-    .delta-flat { background: var(--bg-elevated); color: #94A3B8; }
+    }}
+    .kpi-card-flagged {{
+        border-color: var(--flag);
+        background-color: var(--flag-soft);
+    }}
+    .kpi-top {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
+    .kpi-label {{ font-size: 0.76rem; font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }}
+    .kpi-tag {{
+        font-size: 0.69rem; font-weight: 700; padding: 2px 8px;
+        border-radius: 999px; border: 1px solid var(--ink); color: var(--ink); background: var(--white);
+    }}
+    .kpi-tag-flag {{
+        border-color: var(--flag); color: var(--flag); background: var(--white);
+    }}
+    .kpi-value {{
+        font-size: 1.85rem; font-weight: 800; letter-spacing: -0.03em;
+        color: var(--ink); line-height: 1.1;
+    }}
+    .kpi-sub {{ font-size: 0.74rem; color: var(--ink-soft); margin-top: 4px; font-weight: 500; }}
 
-    .seat-card { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
-    .seat-card-risk { background-color: rgba(239, 68, 68, 0.10); border-color: rgba(239, 68, 68, 0.45); }
-    .seat-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-    .seat-name { font-size: 0.85rem; font-weight: 600; color: #F8FAFC; }
-    .seat-id { font-size: 0.74rem; color: #94A3B8; }
-    .seat-bar-bg { height: 5px; width: 100%; background-color: #334155; border-radius: 99px; overflow: hidden; margin: 6px 0; }
-    .seat-bar-fill { height: 100%; border-radius: 99px; }
-    .seat-meta { display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem; color: #CBD5E1; }
+    /* Flag / Important Alert Banner (Uses User's 3rd Color) */
+    .flag-banner {{
+        display: flex; align-items: center; gap: 10px;
+        background-color: var(--flag-soft);
+        border: 1.5px solid var(--flag);
+        border-radius: 10px; padding: 11px 15px;
+        color: var(--flag); font-size: 0.84rem; font-weight: 600;
+        margin-bottom: 14px;
+    }}
 
-    .coach-card { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-left: 3px solid var(--indigo-500); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
-    .coach-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-    .coach-badge { font-size: 0.68rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; background-color: rgba(99, 102, 241, 0.18); color: #C7D2FE; border: 1px solid rgba(99, 102, 241, 0.4); }
-    .coach-body { font-size: 0.83rem; line-height: 1.55; color: #E2E8F0; }
+    /* Faculty, Seat, Coach & Notification Cards */
+    .ink-card {{
+        background-color: var(--white);
+        border: 1px solid var(--line-light);
+        border-left: 3.5px solid var(--ink);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+    }}
+    .ink-card-flag {{
+        border-color: var(--flag-border);
+        border-left: 3.5px solid var(--flag);
+        background-color: var(--flag-soft);
+    }}
+    .row-between {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+    .card-title {{ font-size: 0.87rem; font-weight: 700; color: var(--ink); }}
+    .card-meta {{ font-size: 0.76rem; color: var(--ink-soft); margin-top: 2px; }}
+    .bar-track {{ height: 5px; width: 100%; background: #E4E4E7; border-radius: 99px; overflow: hidden; margin: 7px 0; }}
+    .bar-fill {{ height: 100%; border-radius: 99px; }}
 
-    .alert-banner { display: flex; align-items: center; gap: 10px; background-color: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.45); border-radius: 10px; padding: 11px 15px; color: #FCA5A5; font-size: 0.83rem; font-weight: 500; margin-bottom: 14px; }
-    .notif-card { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
-    .notif-critical { border-left: 3px solid #EF4444; }
-    .notif-warning { border-left: 3px solid #F59E0B; }
-    .notif-info { border-left: 3px solid #10B981; }
-
-    .room-summary { background-color: var(--bg-elevated); border: 1px solid var(--border-slate); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
-    .room-code { font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; font-weight: 600; color: #A5B4FC; background-color: rgba(99, 102, 241, 0.14); border: 1px solid rgba(99, 102, 241, 0.35); padding: 3px 9px; border-radius: 6px; white-space: nowrap; }
-    .privacy-box { background-color: var(--bg-surface); border: 1px solid var(--border-slate); border-radius: 10px; padding: 12px 13px; font-size: 0.76rem; line-height: 1.65; color: #CBD5E1; }
-    .dot-ok { color: #10B981; font-weight: 700; margin-right: 5px; }
-    .dot-muted { color: #94A3B8; font-weight: 700; margin-right: 5px; }
+    .empty-box {{
+        background-color: var(--white);
+        border: 1.5px dashed var(--ink);
+        border-radius: 10px;
+        padding: 26px 20px;
+        text-align: center;
+        margin: 8px 0;
+    }}
+    .empty-box h4 {{ margin: 0 0 6px 0; font-size: 0.95rem; font-weight: 700; color: var(--ink); }}
+    .empty-box p {{ margin: 0 auto; max-width: 480px; font-size: 0.82rem; color: var(--ink-soft); line-height: 1.5; }}
     </style>
     """
 
 
-def render_top_nav_html(room_code: str, role: str, status_label: str, unread_alerts: int) -> str:
+def render_top_nav_html(org_name: str, room_label: str, role: str, status_label: str, unread_alerts: int) -> str:
     alert_chip = (
-        f'<span class="chip chip-alert">{SVG_ICONS["bell"]}<span>{unread_alerts} Alert{"s" if unread_alerts != 1 else ""}</span></span>'
+        f'<span class="chip chip-flag">{SVG_ICONS["flag"]}<span>{unread_alerts} Flag{"s" if unread_alerts != 1 else ""}</span></span>'
         if unread_alerts > 0
-        else '<span class="chip"><span>No Alerts</span></span>'
+        else '<span class="chip"><span>0 Flags</span></span>'
     )
+    live_cls = "chip chip-flag" if status_label == "Live" else "chip"
+    live_dot = '<span class="dot-flag"></span>' if status_label == "Live" else ""
     return f"""
     <div class="top-bar">
         <div class="brand-wrap">
             <div class="brand-mark">{SVG_ICONS["brand"]}</div>
             <div>
-                <div class="brand-name">AttendAI</div>
+                <div class="brand-name">AttendAI &middot; {html.escape(org_name)}</div>
                 <div class="brand-desc">Classroom Attendance, Engagement &amp; Student Safeguarding</div>
             </div>
         </div>
         <div class="top-meta">
-            <span class="chip">{SVG_ICONS["room"]}<span>{html.escape(room_code)}</span></span>
+            <span class="chip"><span>{html.escape(room_label)}</span></span>
             <span class="chip"><span>{html.escape(role)}</span></span>
             {alert_chip}
-            <span class="chip chip-live"><span class="dot-live"></span><span>{html.escape(status_label)}</span></span>
+            <span class="{live_cls}">{live_dot}<span>{html.escape(status_label)}</span></span>
         </div>
+    </div>
+    """
+
+
+def render_kpi_html(label: str, value: float, sub_text: str, flagged: bool = False, tag: str = "Normal") -> str:
+    card_cls = "kpi-card kpi-card-flagged" if flagged else "kpi-card"
+    tag_cls = "kpi-tag kpi-tag-flag" if flagged else "kpi-tag"
+    val_style = "color:var(--flag);" if flagged else "color:var(--ink);"
+    return f"""
+    <div class="{card_cls}">
+        <div class="kpi-top">
+            <span class="kpi-label">{html.escape(label)}</span>
+            <span class="{tag_cls}">{html.escape(tag)}</span>
+        </div>
+        <div class="kpi-value" style="{val_style}">{value:.1f}%</div>
+        <div class="kpi-sub">{html.escape(sub_text)}</div>
     </div>
     """
 
 
 def render_faculty_card_html(teacher_name: str, subject: str, is_live: bool) -> str:
-    pill = (
-        '<span class="status-pill-hosting"><span class="pill-dot-emerald"></span>Hosting</span>'
-        if is_live
-        else '<span class="status-pill-available"><span class="pill-dot-sky"></span>Available</span>'
-    )
-    card_cls = "faculty-card faculty-card-hosting" if is_live else "faculty-card"
+    cls = "ink-card ink-card-flag" if is_live else "ink-card"
+    tag = '<span class="kpi-tag kpi-tag-flag">Hosting Now</span>' if is_live else '<span class="kpi-tag">Available</span>'
     return f"""
-    <div class="{card_cls}">
-        <div>
-            <div class="faculty-name">{html.escape(teacher_name)}</div>
-            <div class="faculty-subject">{html.escape(subject)}</div>
-        </div>
-        <div>{pill}</div>
-    </div>
-    """
-
-
-def _mini_sparkline_svg(values: list[float], stroke: str) -> str:
-    pts = values[-8:] if len(values) >= 2 else [70.0, 74.0, 76.0, 80.0]
-    w, h = 74, 26
-    lo, hi = min(pts), max(pts)
-    span = max(10.0, hi - lo)
-    coords = []
-    for i, v in enumerate(pts):
-        x = round(i * (w / max(1, len(pts) - 1)), 1)
-        y = round(h - 3 - ((v - lo) / span) * (h - 6), 1)
-        coords.append(f"{x},{y}")
-    return f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" fill="none"><polyline points="{" ".join(coords)}" stroke="{stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-
-
-def render_kpi_html(label: str, value: float, delta: float | None, series: list[float]) -> str:
-    if value >= 75.0:
-        b_cls, b_txt, stroke = "badge-optimal", "On Track", "#10B981"
-    elif value >= 55.0:
-        b_cls, b_txt, stroke = "badge-watch", "Needs Focus", "#F59E0B"
-    else:
-        b_cls, b_txt, stroke = "badge-risk", "Low", "#EF4444"
-
-    if delta is None:
-        d_cls, d_txt = "delta-flat", "Current"
-    elif delta > 0.05:
-        d_cls, d_txt = "delta-pos", f"+{delta:.1f}%"
-    elif delta < -0.05:
-        d_cls, d_txt = "delta-neg", f"{delta:.1f}%"
-    else:
-        d_cls, d_txt = "delta-flat", "0.0%"
-
-    spark = _mini_sparkline_svg(series, stroke)
-    return f"""
-    <div class="kpi-card">
-        <div class="kpi-top">
-            <span class="kpi-label">{html.escape(label)}</span>
-            <span class="kpi-badge {b_cls}">{b_txt}</span>
-        </div>
-        <div class="kpi-mid">
+    <div class="{cls}">
+        <div class="row-between">
             <div>
-                <div class="kpi-value">{value:.1f}%</div>
-                <span class="kpi-delta {d_cls}">{d_txt}</span>
+                <div class="card-title">{html.escape(teacher_name)}</div>
+                <div class="card-meta">{html.escape(subject)}</div>
             </div>
-            <div>{spark}</div>
+            <div>{tag}</div>
         </div>
     </div>
     """
 
 
-def render_seat_card_html(sid: str, name: str, presence: float, focus_state: str, strikes: int, max_strikes: int, status: str) -> str:
-    is_risk = strikes >= max_strikes or "Absent" in status
-    bar_col = "#EF4444" if is_risk else ("#F59E0B" if focus_state in ("Distracted", "Focus Warning") else "#10B981")
-    strike_txt = (
-        f'<span style="color:#FCA5A5;font-weight:600;">{strikes}/{max_strikes} Focus Alerts</span>'
-        if strikes > 0
-        else '<span style="color:#6EE7B7;font-weight:500;">In Window</span>'
-    )
+def render_seat_card_html(sid: str, name: str, presence: float, focus_state: str, strikes: int, max_strikes: int, status: str, accent_color: str) -> str:
+    is_flag = strikes >= max_strikes or "Absent" in status or focus_state in ("Distracted", "Focus Alert")
+    cls = "ink-card ink-card-flag" if is_flag else "ink-card"
+    bar_col = accent_color if is_flag else "#000000"
+    strike_label = f"{strikes}/{max_strikes} Focus Flags" if strikes > 0 else "In Window"
+    strike_col = accent_color if strikes > 0 else "#000000"
     return f"""
-    <div class="seat-card {'seat-card-risk' if is_risk else ''}">
-        <div class="seat-top">
-            <div><span class="seat-name">{html.escape(name)}</span> <span class="seat-id">&middot; {html.escape(sid)}</span></div>
-            <span class="seat-pct" style="font-size:0.78rem;font-weight:600;color:{bar_col};">{presence:.0f}%</span>
+    <div class="{cls}">
+        <div class="row-between">
+            <div><span class="card-title">{html.escape(name)}</span> <span class="card-meta">({html.escape(sid)})</span></div>
+            <span class="num" style="font-size:0.80rem;font-weight:700;color:{bar_col};">{presence:.0f}%</span>
         </div>
-        <div class="seat-bar-bg"><div class="seat-bar-fill" style="width:{min(100, max(5, presence))}%;background:{bar_col};"></div></div>
-        <div class="seat-meta">
+        <div class="bar-track"><div class="bar-fill" style="width:{min(100, max(5, presence))}%;background:{bar_col};"></div></div>
+        <div class="row-between" style="font-size:0.74rem;">
             <span>{html.escape(focus_state)} &middot; <strong>{html.escape(status)}</strong></span>
-            {strike_txt}
+            <span style="font-weight:600;color:{strike_col};">{strike_label}</span>
         </div>
     </div>
     """
 
 
-def render_coach_card_html(category: str, timestamp: str, body: str) -> str:
-    safe_body = html.escape(body).replace("\n", "<br>")
+def render_focus_guard_widget(max_strikes: int, accent_color: str) -> str:
     return f"""
-    <div class="coach-card">
-        <div class="coach-meta">
-            <span class="coach-badge">{html.escape(category)}</span>
-            <span style="font-size:0.72rem;color:#94A3B8;font-variant-numeric:tabular-nums;">{html.escape(timestamp)}</span>
-        </div>
-        <div class="coach-body">{safe_body}</div>
-    </div>
-    """
-
-
-def render_focus_guard_widget(max_strikes: int) -> str:
-    return f"""
-    <div id="fg-box" style="font-family:Inter,system-ui,sans-serif;background:#1E293B;border:1px solid #334155;border-radius:10px;padding:12px 14px;color:#F8FAFC;">
+    <div id="fg-box" style="font-family:Inter,system-ui,sans-serif;background:#FFFFFF;border:1.5px solid #000000;border-radius:10px;padding:12px 14px;color:#000000;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <div style="font-size:12px;font-weight:600;color:#F8FAFC;">Active Window Focus Monitor</div>
-        <span id="fg-status" style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;background:rgba(16,185,129,0.16);color:#6EE7B7;border:1px solid rgba(16,185,129,0.45);">Monitoring &middot; 0/{max_strikes}</span>
+        <div style="font-size:12px;font-weight:700;color:#000000;">Window Focus Monitor</div>
+        <span id="fg-status" style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px;background:#FFFFFF;color:#000000;border:1px solid #000000;">Active &middot; 0/{max_strikes}</span>
       </div>
-      <div id="fg-msg" style="font-size:12px;color:#94A3B8;line-height:1.45;">
-        Automatically detects tab switches or window exits. Switch tabs briefly to preview live focus tracking.
+      <div id="fg-msg" style="font-size:12px;color:#3F3F46;line-height:1.45;">
+        Detects tab switches or window exits automatically. Switch browser tabs briefly to test live tracking.
       </div>
-      <div id="fg-log" style="margin-top:8px;font-size:11px;color:#CBD5E1;max-height:54px;overflow-y:auto;"></div>
+      <div id="fg-log" style="margin-top:8px;font-size:11px;color:#000000;max-height:54px;overflow-y:auto;"></div>
     </div>
     <script>
       (function() {{
         const maxStrikes = {max_strikes};
+        const flagColor = "{accent_color}";
         let strikes = 0;
         let leftAt = null;
         const box = document.getElementById("fg-box");
@@ -607,21 +513,14 @@ def render_focus_guard_widget(max_strikes: int) -> str:
           leftAt = Date.now();
           strikes += 1;
           const nowStr = new Date().toLocaleTimeString();
+          box.style.borderColor = flagColor;
+          statusEl.style.borderColor = flagColor;
+          statusEl.style.color = flagColor;
           if (strikes >= maxStrikes) {{
-            box.style.borderColor = "rgba(239,68,68,0.65)";
-            box.style.background = "rgba(239,68,68,0.12)";
-            statusEl.style.background = "rgba(239,68,68,0.20)";
-            statusEl.style.color = "#FCA5A5";
-            statusEl.style.borderColor = "rgba(239,68,68,0.5)";
             statusEl.textContent = "Limit Reached (" + strikes + "/" + maxStrikes + ")";
-            msgEl.innerHTML = "<strong style='color:#FCA5A5;'>Focus limit exceeded — attendance updated to Absent.</strong>";
+            msgEl.innerHTML = "<strong style='color:" + flagColor + ";'>Focus limit exceeded — attendance marked Absent.</strong>";
           }} else {{
-            box.style.borderColor = "rgba(245,158,11,0.55)";
-            box.style.background = "rgba(245,158,11,0.10)";
-            statusEl.style.background = "rgba(245,158,11,0.18)";
-            statusEl.style.color = "#FCD34D";
-            statusEl.style.borderColor = "rgba(245,158,11,0.45)";
-            statusEl.textContent = "Alert " + strikes + "/" + maxStrikes;
+            statusEl.textContent = "Flag " + strikes + "/" + maxStrikes;
           }}
           const entry = document.createElement("div");
           entry.textContent = nowStr + " — " + reason + " (" + strikes + "/" + maxStrikes + ")";
@@ -641,7 +540,7 @@ def render_focus_guard_widget(max_strikes: int) -> str:
           if (document.hidden) recordExit("Switched browser tab");
           else recordReturn();
         }});
-        window.addEventListener("blur", function() {{ recordExit("Left classroom window"); }});
+        window.addEventListener("blur", function() {{ recordExit("Exited classroom window"); }});
         window.addEventListener("focus", function() {{ recordReturn(); }});
       }})();
     </script>
