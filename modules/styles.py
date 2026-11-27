@@ -18,9 +18,9 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
 def get_app_css(accent_color: str = "#C81E1E") -> str:
     """
     Strict 3-Color Light Editorial Theme:
-      1. Pure White (#FFFFFF) canvas & cards
-      2. Black Ink (#000000) text, crisp highlights, primary buttons & borders
-      3. User-Selectable Accent / Flag Color (accent_color) for warnings & important flags
+      1. Pure White (#FFFFFF) background & cards
+      2. Black Ink (#000000) text, tabs, dropdowns, buttons & borders
+      3. User-Selectable Flag Color (accent_color) for alerts & highlights
     """
     flag_soft = _hex_to_rgba(accent_color, 0.08)
     flag_border = _hex_to_rgba(accent_color, 0.45)
@@ -34,7 +34,7 @@ def get_app_css(accent_color: str = "#C81E1E") -> str:
         --ink: #000000;
         --ink-soft: #3F3F46;
         --placeholder: #52525B;
-        --line-light: #E4E4E7;
+        --line-light: #D4D4D8;
         --subtle-bg: #F4F4F5;
         --flag: {accent_color};
         --flag-soft: {flag_soft};
@@ -45,6 +45,7 @@ def get_app_css(accent_color: str = "#C81E1E") -> str:
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
         background-color: var(--white) !important;
         color: var(--ink) !important;
+        color-scheme: light !important;
         -webkit-font-smoothing: antialiased;
     }}
 
@@ -52,15 +53,27 @@ def get_app_css(accent_color: str = "#C81E1E") -> str:
         font-variant-numeric: tabular-nums;
     }}
 
-    /* Clean Light Header (Keeps Sidebar Reopen Arrow Visible & Clickable) */
+    /* Top Header & Clearly Visible Sidebar Toggle Arrow */
     header[data-testid="stHeader"] {{
         background-color: var(--white) !important;
-        border-bottom: 1px solid var(--line-light);
+        border-bottom: 1px solid var(--line-light) !important;
     }}
     header[data-testid="stHeader"] button,
-    header[data-testid="stHeader"] svg {{
+    [data-testid="stExpandSidebarButton"],
+    [data-testid="collapsedControl"] button,
+    [data-testid="stSidebarCollapseButton"] button {{
+        background-color: var(--white) !important;
+        color: var(--ink) !important;
+        border: 1.5px solid var(--ink) !important;
+        border-radius: 7px !important;
+    }}
+    header[data-testid="stHeader"] button svg,
+    [data-testid="stExpandSidebarButton"] svg,
+    [data-testid="collapsedControl"] svg,
+    [data-testid="stSidebarCollapseButton"] svg {{
         color: var(--ink) !important;
         fill: var(--ink) !important;
+        stroke: var(--ink) !important;
     }}
     #MainMenu,
     footer,
@@ -71,107 +84,162 @@ def get_app_css(accent_color: str = "#C81E1E") -> str:
         visibility: hidden !important;
     }}
 
+    /* Extra top padding so the AttendAI banner never clips under the header */
     .block-container {{
-        padding-top: 2.75rem !important;
+        padding-top: 4.5rem !important;
         padding-bottom: 3.5rem !important;
         padding-left: 2rem !important;
         padding-right: 2rem !important;
         max-width: 1420px;
     }}
 
-    /* Pure White Sidebar with Black Ink Divider */
+    /* Pure White Sidebar */
     section[data-testid="stSidebar"] {{
         background-color: var(--white) !important;
         border-right: 1.5px solid var(--ink) !important;
     }}
-    section[data-testid="stSidebar"] * {{
-        color: var(--ink);
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] span,
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stRadio"] label,
+    [data-testid="stRadio"] p,
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] summary span {{
+        color: var(--ink) !important;
     }}
-    section[data-testid="stSidebar"] details {{
+    section[data-testid="stSidebar"] details,
+    [data-testid="stExpander"] details {{
         background-color: var(--white) !important;
-        border: 1px solid var(--line-light) !important;
+        border: 1.5px solid var(--ink) !important;
         border-radius: 8px !important;
         padding: 2px 6px;
     }}
-    section[data-testid="stSidebar"] summary {{
-        font-weight: 600 !important;
-        font-size: 0.85rem !important;
-        color: var(--ink) !important;
-    }}
 
-    /* Light-Mode Inputs, Dropdowns & Legible 'Example: ...' Placeholders */
-    div[data-baseweb="input"] > div,
+    /* Force Light Mode on ALL Selectboxes ('1x', 'View As', etc.) & Text Inputs */
+    [data-testid="stSelectbox"] div[data-baseweb="select"],
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div > div,
     div[data-baseweb="select"] > div,
+    div[data-baseweb="input"],
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="base-input"],
     textarea,
     .stTextInput input,
     .stNumberInput input,
     .stDateInput input {{
         background-color: var(--white) !important;
-        border: 1px solid var(--line-light) !important;
-        border-radius: 8px !important;
         color: var(--ink) !important;
-        transition: border-color 0.15s ease !important;
+        -webkit-text-fill-color: var(--ink) !important;
     }}
-    div[data-baseweb="select"] > div *,
-    div[data-baseweb="input"] input,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div,
     textarea {{
+        border: 1.5px solid var(--ink) !important;
+        border-radius: 8px !important;
+    }}
+    [data-testid="stSelectbox"] div[data-baseweb="select"] *,
+    div[data-baseweb="select"] * {{
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }}
+    div[data-baseweb="select"] svg {{
+        fill: var(--ink) !important;
         color: var(--ink) !important;
     }}
     input::placeholder,
     textarea::placeholder {{
         color: var(--placeholder) !important;
+        -webkit-text-fill-color: var(--placeholder) !important;
         opacity: 1 !important;
     }}
-    div[data-baseweb="select"] svg {{
-        fill: var(--ink) !important;
-    }}
-    div[data-baseweb="input"] > div:hover,
-    div[data-baseweb="select"] > div:hover,
-    textarea:hover {{
-        border-color: var(--ink) !important;
-    }}
-    div[data-baseweb="input"] > div:focus-within,
-    div[data-baseweb="select"] > div:focus-within {{
-        border-color: var(--ink) !important;
-        box-shadow: 0 0 0 1px var(--ink) !important;
-    }}
+    div[data-baseweb="popover"],
+    div[data-baseweb="popover"] > div,
     ul[data-baseweb="menu"] {{
         background-color: var(--white) !important;
         border: 1.5px solid var(--ink) !important;
+        border-radius: 8px !important;
     }}
-    ul[data-baseweb="menu"] li {{
+    ul[data-baseweb="menu"] li,
+    ul[data-baseweb="menu"] li * {{
+        background-color: var(--white) !important;
         color: var(--ink) !important;
     }}
-    ul[data-baseweb="menu"] li:hover {{
+    ul[data-baseweb="menu"] li:hover,
+    ul[data-baseweb="menu"] li:hover * {{
         background-color: var(--subtle-bg) !important;
+        color: var(--ink) !important;
     }}
 
-    /* Popover Buttons & Popover Bodies */
+    /* Fix ALL Buttons (Including Form Submit 'Ask' & Popover Buttons) */
+    button[data-testid^="stBaseButton-"],
+    [data-testid="stPopover"] button,
+    [data-testid="stPopoverButton"] {{
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        font-size: 0.84rem !important;
+        min-height: 2.45rem !important;
+        white-space: nowrap !important;
+        transition: all 0.14s ease !important;
+    }}
+
+    /* Secondary, Form Submit ('Ask') & Popover Buttons -> Crisp White + Black Ink */
+    button[data-testid="stBaseButton-secondary"],
+    button[data-testid="stBaseButton-secondaryFormSubmit"],
+    button[kind="secondary"],
+    button[kind="secondaryFormSubmit"],
     [data-testid="stPopover"] button,
     [data-testid="stPopoverButton"] {{
         background-color: var(--white) !important;
         border: 1.5px solid var(--ink) !important;
-        border-radius: 8px !important;
         color: var(--ink) !important;
-        font-weight: 600 !important;
-        font-size: 0.84rem !important;
-        min-height: 2.4rem !important;
     }}
+    button[data-testid="stBaseButton-secondary"] *,
+    button[data-testid="stBaseButton-secondaryFormSubmit"] *,
+    button[kind="secondary"] *,
+    button[kind="secondaryFormSubmit"] *,
     [data-testid="stPopover"] button *,
     [data-testid="stPopoverButton"] * {{
         color: var(--ink) !important;
         fill: var(--ink) !important;
     }}
+    button[data-testid="stBaseButton-secondary"]:hover,
+    button[data-testid="stBaseButton-secondaryFormSubmit"]:hover,
     [data-testid="stPopover"] button:hover,
     [data-testid="stPopoverButton"]:hover {{
         background-color: var(--ink) !important;
         color: var(--white) !important;
     }}
+    button[data-testid="stBaseButton-secondary"]:hover *,
+    button[data-testid="stBaseButton-secondaryFormSubmit"]:hover *,
     [data-testid="stPopover"] button:hover *,
     [data-testid="stPopoverButton"]:hover * {{
         color: var(--white) !important;
         fill: var(--white) !important;
     }}
+
+    /* Primary Buttons ('Start Class', 'Generate Tip') -> Solid Black Ink + White Text */
+    button[data-testid="stBaseButton-primary"],
+    button[data-testid="stBaseButton-primaryFormSubmit"],
+    button[kind="primary"],
+    button[kind="primaryFormSubmit"] {{
+        background-color: var(--ink) !important;
+        border: 1.5px solid var(--ink) !important;
+        color: var(--white) !important;
+    }}
+    button[data-testid="stBaseButton-primary"] *,
+    button[data-testid="stBaseButton-primaryFormSubmit"] *,
+    button[kind="primary"] *,
+    button[kind="primaryFormSubmit"] * {{
+        color: var(--white) !important;
+        fill: var(--white) !important;
+    }}
+    button[data-testid="stBaseButton-primary"]:hover,
+    button[data-testid="stBaseButton-primaryFormSubmit"]:hover {{
+        background-color: #27272A !important;
+        border-color: #27272A !important;
+    }}
+
     [data-testid="stPopoverBody"] {{
         background-color: var(--white) !important;
         border: 1.5px solid var(--ink) !important;
@@ -179,54 +247,49 @@ def get_app_css(accent_color: str = "#C81E1E") -> str:
         color: var(--ink) !important;
     }}
 
-    /* Primary (Black Ink) & Secondary (White + Black Ink Outline) Buttons */
-    .stButton > button,
-    .stDownloadButton > button,
-    .stFormSubmitButton > button {{
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        font-size: 0.84rem !important;
-        min-height: 2.4rem !important;
-        white-space: nowrap !important;
-        transition: all 0.14s ease !important;
-    }}
-    .stButton > button[kind="secondary"],
-    .stDownloadButton > button[kind="secondary"],
-    .stFormSubmitButton > button[kind="secondary"] {{
+    /* Fix Navigation Tabs Directly (No .stTabs Dependency) */
+    div[data-baseweb="tab-list"] {{
+        gap: 6px !important;
         background-color: var(--white) !important;
+        padding: 5px !important;
+        border-radius: 10px !important;
         border: 1.5px solid var(--ink) !important;
+        margin-bottom: 1.25rem !important;
+    }}
+    button[data-baseweb="tab"],
+    button[role="tab"] {{
+        border-radius: 7px !important;
+        padding: 8px 15px !important;
+        background-color: var(--white) !important;
+        border: 1px solid transparent !important;
+        opacity: 1 !important;
+    }}
+    button[data-baseweb="tab"] *,
+    button[role="tab"] * {{
         color: var(--ink) !important;
+        fill: var(--ink) !important;
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        opacity: 1 !important;
     }}
-    .stButton > button[kind="secondary"] *,
-    .stDownloadButton > button[kind="secondary"] *,
-    .stFormSubmitButton > button[kind="secondary"] * {{
-        color: var(--ink) !important;
+    button[data-baseweb="tab"]:hover,
+    button[role="tab"]:hover {{
+        background-color: var(--subtle-bg) !important;
     }}
-    .stButton > button[kind="secondary"]:hover,
-    .stDownloadButton > button[kind="secondary"]:hover {{
+    button[data-baseweb="tab"][aria-selected="true"],
+    button[role="tab"][aria-selected="true"] {{
         background-color: var(--ink) !important;
-        color: var(--white) !important;
     }}
-    .stButton > button[kind="secondary"]:hover *,
-    .stDownloadButton > button[kind="secondary"]:hover * {{
+    button[data-baseweb="tab"][aria-selected="true"] *,
+    button[role="tab"][aria-selected="true"] * {{
         color: var(--white) !important;
+        fill: var(--white) !important;
+        font-weight: 700 !important;
     }}
-    .stButton > button[kind="primary"],
-    .stDownloadButton > button[kind="primary"],
-    .stFormSubmitButton > button[kind="primary"] {{
-        background-color: var(--ink) !important;
-        border: 1.5px solid var(--ink) !important;
-        color: var(--white) !important;
-    }}
-    .stButton > button[kind="primary"] *,
-    .stDownloadButton > button[kind="primary"] *,
-    .stFormSubmitButton > button[kind="primary"] * {{
-        color: var(--white) !important;
-    }}
-    .stButton > button[kind="primary"]:hover,
-    .stDownloadButton > button[kind="primary"]:hover {{
-        background-color: #27272A !important;
-        border-color: #27272A !important;
+    div[data-baseweb="tab-highlight"],
+    div[data-baseweb="tab-border"] {{
+        display: none !important;
+        background: transparent !important;
     }}
 
     /* Pure White Bordered Cards */
@@ -241,47 +304,9 @@ def get_app_css(accent_color: str = "#C81E1E") -> str:
         border-radius: 8px !important;
     }}
     [data-testid="stDataFrame"] {{
-        border: 1px solid var(--line-light) !important;
+        border: 1.5px solid var(--ink) !important;
         border-radius: 8px !important;
         overflow: hidden !important;
-    }}
-
-    /* Navigation Tabs */
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 6px !important;
-        background-color: var(--white) !important;
-        padding: 5px !important;
-        border-radius: 10px !important;
-        border: 1.5px solid var(--ink) !important;
-        margin-bottom: 1.25rem !important;
-    }}
-    .stTabs button[data-baseweb="tab"] {{
-        border-radius: 7px !important;
-        padding: 8px 14px !important;
-        background-color: var(--white) !important;
-        border: 1px solid transparent !important;
-    }}
-    .stTabs button[data-baseweb="tab"] p,
-    .stTabs button[data-baseweb="tab"] span {{
-        color: var(--ink) !important;
-        font-weight: 500 !important;
-        font-size: 0.85rem !important;
-    }}
-    .stTabs button[data-baseweb="tab"]:hover {{
-        background-color: var(--subtle-bg) !important;
-    }}
-    .stTabs button[data-baseweb="tab"][aria-selected="true"] {{
-        background-color: var(--ink) !important;
-    }}
-    .stTabs button[data-baseweb="tab"][aria-selected="true"] p,
-    .stTabs button[data-baseweb="tab"][aria-selected="true"] span {{
-        color: var(--white) !important;
-        font-weight: 600 !important;
-    }}
-    .stTabs [data-baseweb="tab-highlight"],
-    .stTabs [data-baseweb="tab-border"] {{
-        display: none !important;
-        background: transparent !important;
     }}
 
     /* Top Workspace Header */
