@@ -1061,4 +1061,171 @@ def render_roster_and_reports():
         with r_l:
             with st.container(border=True):
                 st.markdown('<p class="sec-title">Enroll Student</p>', unsafe_allow_html=True)
-                st.markdown('<p class="sec-sub">Generates an encrypted identity signature on-device and discards
+                st.markdown('<p class="sec-sub">Generates an encrypted identity signature on-device and discards the photo immediately.</p>', unsafe_allow_html=True)
+                nid = st.text_input("Student ID", placeholder="S107")
+                nname = st.text_input("Full Name", placeholder="Priya Deshmukh")
+                src_mode = st.radio("Photo Source", ["Upload Photo", "Camera Snapshot"], horizontal=True)
+                img_file = st.file_uploader("Front-facing portrait", type=["jpg", "jpeg", "png"]) if src_mode == "Upload Photo" else st.camera_input("Take Snapshot")
+
+                if st.button("Save Student Profile", icon=":material/person_add:", type="primary", width="stretch"):
+                    if not nid.strip() or not nname.strip() or img_file is None:
+                        st.error("Enter Student ID, Full Name, and provide a clear photo.")
+                    else:
+                        arr = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
+                        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                        if img is not None:
+                            fapp = get_face_analyzer()
+                            faces = fapp.get(img)
+                            if len(faces) == 1:
+                                emb = faces[0].embedding / np.linalg.norm(faces[0].embedding)
+                                save_student(nid.strip(), nname.strip(), emb)
+                                st.success(f"Enrolled {nname.strip()}. Original photo permanently discarded.")
+                                st.rerun(scope="fragment")
+                            else:
+                                st.error("Please ensure exactly one clear face is visible.")
+
+        with r_r:
+            with st.container(border=True):
+                rh1, rh2 = st.columns([1.6, 1], vertical_alignment="center")
+                with rh1:
+                    st.markdown('<p class="sec-title">Enrolled Directory</p>', unsafe_allow_html=True)
+                with rh2:
+                    if st.button("Load Sample Roster", icon=":material/group_add:", width="stretch"):
+                        seed_sample_roster()
+                        st.rerun(scope="fragment")
+
+                roster = load_all_students()
+                rdf = pd.DataFrame([
+                    {
+                        "Student ID": r["student_id"],
+                        "Name": r["name"],
+                        "Privacy Status": "Encrypted Signature · No Photo",
+                        "Added": r["created_at"],
+                    }
+                    for r in roster
+                ])
+                st.dataframe(rdf, width="stretch", hide_index=True)
+
+                if roster:
+                    i1, i2, i3 = st.columns([2, 1, 1], vertical_alignment="center")
+                    opts = [f"{r['name']} ({r['student_id']})" for r in roster]
+                    with i1:
+                        picked = st.selectbox("Manage Student", opts, label_visibility="collapsed")
+                    tid = picked.split("(")[-1].rstrip(")")
+                    tobj = next(r for r in roster if r["student_id"] == tid)
+                    with i2:
+                        with st.popover("Privacy Proof", icon=":material/verified_user:", width="stretch"):
+                            st.markdown(f"**{tobj['name']}** (`{tid}`)")
+                            st.caption("Stored Images: 0 files (0 bytes)")
+                            vals = ", ".join(f"{v:+.4f}" for v in tobj["embedding"][:8])
+                            st.code(f"Signature Preview: [{vals}, ...]", language="text")
+                    with i3:
+                        if st.button("Remove", icon=":material/delete:", width="stretch"):
+                            delete_student(tid)
+                            st.rerun(scope="fragment")
+
+    with sub_tab2:
+        with st.container(border=True):
+            st.markdown('<p class="sec-title">Automated Session PDF Archive</p>', unsafe_allow_html=True)
+            st.markdown('<p class="sec-sub">Generated automatically whenever a scheduled session concludes.</p>', unsafe_allow_html=True)
+            rep_df = get_session_reports()
+            if rep_df.empty:
+                st.caption("Click End & Export PDF in the Live Session tab to archive your first session report.")
+            else:
+                for _, rr in rep_df.head(5).iterrows():
+                    rc1, rc2 = st.columns([3, 1], vertical_alignment="center")
+                    with rc1:
+                        st.markdown(
+                            f"**{rr['subject_name']}** ({rr['lobby_code']}) &middot; "
+                            f"Engagement: **{rr['avg_engagement']}%** &middot; Present: **{rr['present_count']}/{rr['total_count']}** &middot; "
+                            f"Focus Alerts: **{rr['proctor_violations']}** &middot; _{rr['generated_at']}_"
+                        )
+                    with rc2:
+                        st.download_button(
+                            "Download PDF",
+                            data=base64.b64decode(rr["pdf_b64"]),
+                            file_name=f"AttendAI_Session_Report_{rr['session_id']}.pdf",
+                            mime="application/pdf",
+                            icon=":material/picture_as_pdf:",
+                            key=f"dl_rep_{rr['id']}",
+                            width="stretch",
+                        )
+
+        sessions = get_session_list()
+        sel_sess = st.selectbox("Session History", ["ALL"] + sessions, format_func=lambda x: "All Sessions" if x == "ALL" else x)
+        _, df_eng, _ = get_session_data(sel_sess)
+
+        if not df_eng.empty:
+            c1, c2 = st.columns([1.5, 1], gap="medium")
+            with c1:
+                with st.container(border=True):
+                    st.markdown('<p class="sec-title">Engagement Breakdown</p>', unsafe_allow_html=True)
+                    df_p = df_eng.tail(18).rename(columns={"gaze_score": "Visual Attention", "movement_score": "Posture & Activity", "audio_score": "Class Discussion"})
+                    fig_b = go.Figure()
+                    for nm, cl in [("Visual Attention", "#818CF8"), ("Posture & Activity", "#38BDF8"), ("Class Discussion", "#10B981")]:
+                        fig_b.add_trace(go.Bar(x=df_p["timestamp"], y=df_p[nm], name=nm, marker_color=cl))
+                    fig_b.update_layout(
+                        barmode="group",
+                        height=280,
+                        margin=dict(l=8, r=8, t=10, b=8),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#CBD5E1", family="Inter", size=11),
+                        hoverlabel=PLOTLY_HOVER,
+                        yaxis=dict(range=[0, 105], gridcolor="rgba(148,163,184,0.12)"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#CBD5E1")),
+                    )
+                    st.plotly_chart(fig_b, width="stretch", config=PLOTLY_CFG, theme=None)
+
+            with c2:
+                with st.container(border=True):
+                    st.markdown('<p class="sec-title">Engagement Mix</p>', unsafe_allow_html=True)
+                    comp = round(float(df_eng["total_engagement"].mean()), 1)
+                    fig_d = go.Figure(
+                        data=[
+                            go.Pie(
+                                labels=["Visual Attention", "Posture & Activity", "Class Discussion"],
+                                values=[round(float(df_eng["gaze_score"].mean()), 1), round(float(df_eng["movement_score"].mean()), 1), round(float(df_eng["audio_score"].mean()), 1)],
+                                hole=0.68,
+                                marker=dict(colors=["#818CF8", "#38BDF8", "#10B981"], line=dict(color="#0F172A", width=2)),
+                            )
+                        ]
+                    )
+                    fig_d.update_layout(
+                        height=280,
+                        margin=dict(l=12, r=12, t=12, b=28),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#CBD5E1", family="Inter", size=11),
+                        hoverlabel=PLOTLY_HOVER,
+                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.08, font=dict(color="#CBD5E1")),
+                        annotations=[dict(text=f"<b>{comp:.1f}%</b><br><span style='font-size:11px;color:#94A3B8;'>Overall</span>", x=0.5, y=0.5, font=dict(size=20, color="#F8FAFC"), showarrow=False)],
+                    )
+                    st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CFG, theme=None)
+
+
+# --- Primary Navigation ---
+tabs = st.tabs([
+    ":material/sensors: Live Session",
+    ":material/meeting_room: Course Rooms",
+    ":material/calculate: Attendance & Grades",
+    ":material/family_restroom: Guardian & Safety",
+    ":material/folder_shared: Roster & Reports",
+])
+
+with tabs[0]:
+    if st.session_state.stream_playing:
+        render_live_session_streaming()
+    else:
+        render_live_session_paused()
+
+with tabs[1]:
+    render_course_rooms()
+
+with tabs[2]:
+    render_attendance_and_grades()
+
+with tabs[3]:
+    render_guardian_and_safety()
+
+with tabs[4]:
+    render_roster_and_reports()
